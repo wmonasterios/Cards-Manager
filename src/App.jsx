@@ -527,12 +527,13 @@ const login = async (e) => {
         email: email.trim(),
         password: password.trim(),
       });
-      if (error) throw error;
-    } catch (err) {
-      console.error("Error en login:", err);
-      setAviso("Email o contraseña incorrectos.");
-    }
-  };
+    if (error) throw error;
+          window.location.reload();
+        } catch (err) {
+          console.error("Error en login:", err);
+          setAviso("Email o contraseña incorrectos.");
+        }
+      };
 
   const logout = async () => {
     await supabase.auth.signOut();
