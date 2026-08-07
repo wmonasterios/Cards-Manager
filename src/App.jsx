@@ -662,7 +662,7 @@ const login = async (e) => {
               required
             />
             <Boton variante="solido" onClick={login} style={{ width: "100%", textAlign: "center" }}>
-              Enviar enlace de login
+              Entrar
             </Boton>
           </form>
           {aviso && (
