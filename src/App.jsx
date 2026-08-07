@@ -588,10 +588,11 @@ const login = async (e) => {
     setAviso("Tarjeta eliminada.");
   };
   const agregar = () => {
-    const t = { id: Date.now() + Math.random(), nombre: "", banco: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null };
-    setTarjetas((prev) => [...prev, t]);
-    setAbierta(t.id);
-  };
+      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null };
+      setTarjetas((prev) => [t, ...prev]);
+      setAbierta(t.id);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
   const alternarPago = (t, c) => {
     actualizar({ ...t, pagado_hasta: c.pagado ? null : iso(c.ultimoCorte) });
   };
