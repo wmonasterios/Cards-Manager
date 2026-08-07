@@ -427,6 +427,7 @@ export default function App() {
   const [tarjetas, setTarjetas] = useState([]);
   const [usuario, setUsuario] = useState(null);
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [listo, setListo] = useState(false);
   const [modo, setModo] = useState("cargando");
   const [busqueda, setBusqueda] = useState("");
@@ -518,19 +519,18 @@ export default function App() {
     }
   };
 
-  const login = async (e) => {
+const login = async (e) => {
     e.preventDefault();
-    if (!email.trim()) return;
+    if (!email.trim() || !password.trim()) return;
     try {
-      const { error } = await supabase.auth.signInWithOtp({
+      const { error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
-        options: { shouldCreateUser: true },
+        password: password.trim(),
       });
       if (error) throw error;
-      setAviso("Revisa tu correo para el enlace de login.");
     } catch (err) {
       console.error("Error en login:", err);
-      setAviso("Error al enviar el enlace.");
+      setAviso("Email o contraseña incorrectos.");
     }
   };
 
@@ -644,6 +644,17 @@ export default function App() {
               placeholder="tu@email.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              style={{
+                width: "100%", boxSizing: "border-box", padding: "14px 16px", borderRadius: 12,
+                border: `1px solid ${C.line}`, fontFamily: SANS, fontSize: 16, marginBottom: 12,
+              }}
+              required
+            />
+            <input
+              type="password"
+              placeholder="Contraseña"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               style={{
                 width: "100%", boxSizing: "border-box", padding: "14px 16px", borderRadius: 12,
                 border: `1px solid ${C.line}`, fontFamily: SANS, fontSize: 16, marginBottom: 12,
