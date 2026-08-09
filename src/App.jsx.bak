@@ -590,7 +590,7 @@ function AceleradorEditor({ aceleradores, onChange }) {
                       value={a.categoria}
                       onChange={(e) => actualizarUno(i, "categoria", e.target.value)}
                       style={{
-                        width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 6,
+                        width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 10,
                         border: `1px solid ${C.line}`, background: "#fff", color: C.ink,
                         fontFamily: SANS, fontSize: 15,
                       }}
@@ -1145,7 +1145,7 @@ const login = async (e) => {
           .tj-input:focus { outline: 2px solid ${C.jade}; outline-offset: 2px; }
         `}</style>
         <div style={{ maxWidth: 380, width: "100%" }}>
-          <h1 style={{ fontFamily: SANS, fontWeight: 700, fontSize: 36, color: C.ink, textAlign: "center", marginBottom: 10, lineHeight: 1.2 }}>
+          <h1 style={{ fontFamily: SERIF, fontSize: 32, color: C.ink, textAlign: "center", marginBottom: 10 }}>
             Cuándo pagar
           </h1>
           <p style={{ fontFamily: SANS, fontSize: 15, color: C.soft, textAlign: "center", marginBottom: 24 }}>
@@ -1158,7 +1158,7 @@ const login = async (e) => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               style={{
-                width: "100%", boxSizing: "border-box", padding: "14px 16px", borderRadius: 6,
+                width: "100%", boxSizing: "border-box", padding: "14px 16px", borderRadius: 12,
                 border: `1px solid ${C.line}`, fontFamily: SANS, fontSize: 16, marginBottom: 12,
               }}
               required
@@ -1169,7 +1169,7 @@ const login = async (e) => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               style={{
-                width: "100%", boxSizing: "border-box", padding: "14px 16px", borderRadius: 6,
+                width: "100%", boxSizing: "border-box", padding: "14px 16px", borderRadius: 12,
                 border: `1px solid ${C.line}`, fontFamily: SANS, fontSize: 16, marginBottom: 12,
               }}
               required
@@ -1207,7 +1207,7 @@ const login = async (e) => {
             <div style={{ fontFamily: MONO, fontSize: 12, letterSpacing: 1.6, textTransform: "uppercase", color: C.plum, marginBottom: 8 }}>
               Ciclo de facturación · {fmtFechaLarga(hoy)}
             </div>
-            <h1 style={{ margin: 0, fontFamily: SANS, fontWeight: 700, fontSize: 36, lineHeight: 1.2, color: C.ink }}>
+            <h1 style={{ margin: 0, fontFamily: SERIF, fontSize: 40, lineHeight: 1.05, color: C.ink }}>
               Cuándo pagar
             </h1>
           </div>
@@ -1221,7 +1221,7 @@ const login = async (e) => {
           </div>
         </header>
 
-        <p style={{ fontFamily: SANS, fontSize: 16, lineHeight: 1.6, color: C.soft, marginBottom: 32 }}>
+        <p style={{ fontFamily: SANS, fontSize: 15.5, lineHeight: 1.5, color: C.soft, marginBottom: 24 }}>
           Cada tarjeta te presta dinero gratis entre el corte y la fecha de pago de contado.
           Esto te dice hasta qué día puedes esperar sin pagar un centavo de interés.
         </p>
@@ -1245,8 +1245,8 @@ const login = async (e) => {
             <div
               key={x.et}
               style={{
-                flex: "1 1 200px", background: C.card, boxShadow: SOMBRA_CARD,
-                borderRadius: 18, padding: "24px",
+                flex: "1 1 200px", background: C.card, border: `1px solid ${C.line}`,
+                borderRadius: 16, padding: "18px 18px 16px",
               }}
             >
               <div style={{ fontFamily: SANS, fontSize: 11, letterSpacing: 0.7, textTransform: "uppercase", color: C.soft, marginBottom: 8 }}>
@@ -1258,7 +1258,7 @@ const login = async (e) => {
           ))}
         </div>
 
-        <p style={{ margin: "0 0 16px", fontFamily: SANS, fontWeight: 600, fontSize: 18, lineHeight: 1.4, color: colorProximo, padding: "0 2px" }}>
+        <p style={{ margin: "0 0 16px", fontFamily: SERIF, fontSize: 19, lineHeight: 1.45, color: colorProximo, padding: "0 2px" }}>
           {!proximo
             ? "No tienes nada pendiente de pago. Todo al día."
             : proximo.c.diasContado < 0
@@ -1269,7 +1269,7 @@ const login = async (e) => {
         </p>
 
         {mejorCompra && (
-          <div style={{ background: C.jadeSoft, borderRadius: 18, padding: "20px 24px", marginBottom: 22 }}>
+          <div style={{ background: C.jadeSoft, border: `1px solid ${C.jade}22`, borderRadius: 16, padding: "16px 18px", marginBottom: 22 }}>
             <div style={{ fontFamily: SANS, fontSize: 11, letterSpacing: 0.7, textTransform: "uppercase", color: C.jade, marginBottom: 6 }}>
               Si vas a comprar hoy
             </div>
@@ -1283,7 +1283,7 @@ const login = async (e) => {
         )}
 
         {tarjetas.length > 0 && (
-          <div style={{ background: C.card, boxShadow: SOMBRA_CARD, borderRadius: 18, padding: "24px", marginBottom: 22 }}>
+          <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 18px 16px", marginBottom: 22 }}>
             <div style={{ fontFamily: SANS, fontSize: 11, letterSpacing: 0.7, textTransform: "uppercase", color: C.plum, marginBottom: 12 }}>
               Simulador: con qué tarjeta pagar
             </div>
@@ -1298,7 +1298,7 @@ const login = async (e) => {
                     value={simCategoria}
                     onChange={(e) => setSimCategoria(e.target.value)}
                     style={{
-                      width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 6,
+                      width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 10,
                       border: `1px solid ${C.line}`, background: "#fff", color: C.ink,
                       fontFamily: SANS, fontSize: 16,
                     }}
@@ -1340,7 +1340,7 @@ const login = async (e) => {
                   }}
                 >
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontFamily: SANS, fontWeight: 600, fontSize: 17, color: C.ink, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ fontFamily: SERIF, fontSize: 17, color: C.ink, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       {i === 0 && <Chip nivel="verde">Mejor opción</Chip>}
                       {t.nombre || "Sin nombre"}
                     </div>
@@ -1382,7 +1382,7 @@ const login = async (e) => {
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             style={{
-              flex: "2 1 220px", padding: "12px 14px", borderRadius: 6,
+              flex: "2 1 220px", padding: "12px 14px", borderRadius: 10,
               border: `1px solid ${C.line}`, background: "#fff", fontFamily: SANS, fontSize: 16,
               color: C.ink, minHeight: 44, boxSizing: "border-box",
             }}
@@ -1437,7 +1437,7 @@ const login = async (e) => {
         </div>
 
         {aviso && (
-          <div style={{ background: C.card, boxShadow: SOMBRA_CARD, borderRadius: 12, padding: "10px 14px", marginBottom: 14, fontFamily: SANS, fontSize: 13.5, color: C.soft }}>
+          <div style={{ background: C.card, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, fontFamily: SANS, fontSize: 13.5, color: C.soft }}>
             {aviso}{" "}
             <button
               onClick={() => setAviso("")}
@@ -1448,7 +1448,7 @@ const login = async (e) => {
           </div>
         )}
 
-        <div style={{ marginTop: 16, background: C.card, boxShadow: SOMBRA_CARD, borderRadius: 18, padding: "16px 20px", marginBottom: 16 }}>
+        <div style={{ marginTop: 16, background: C.card, border: `1px solid ${filtro === "todas" ? C.line : C.amberSoft}`, borderRadius: 16, padding: "14px 16px", marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ width: 9, height: 9, borderRadius: 999, flexShrink: 0, background: sinGuardar ? C.amber : C.green }} />
             <span style={{ fontFamily: SANS, fontSize: 14.5, color: C.ink, flex: 1, minWidth: 180 }}>
@@ -1458,8 +1458,8 @@ const login = async (e) => {
         </div>
 
         {visibles.length === 0 ? (
-          <div style={{ background: C.card, boxShadow: SOMBRA_CARD, borderRadius: 18, padding: "40px 24px", textAlign: "center", marginBottom: 24 }}>
-            <p style={{ margin: 0, fontFamily: SANS, fontWeight: 700, fontSize: 20, color: C.ink }}>
+          <div style={{ background: C.card, border: `1px dashed ${C.line}`, borderRadius: 16, padding: "34px 22px", textAlign: "center", marginBottom: 24 }}>
+            <p style={{ margin: 0, fontFamily: SERIF, fontSize: 19, color: C.ink }}>
               {tarjetas.length === 0 ? "Aún no hay tarjetas" : "Ninguna tarjeta coincide"}
             </p>
             <p style={{ margin: "8px 0 16px", fontFamily: SANS, fontSize: 14.5, color: C.soft }}>
