@@ -113,6 +113,92 @@ function calcular(t, hoy) {
   };
 }
 
+/* ─────────────────────────── Motor de decisión: aceleradores ─────────────────────────── */
+// Determina si un acelerador está vigente para una fecha dada (no vencido y día de semana válido).
+function aceleradorVigente(a, fecha) {
+  if (!a || !a.categoria) return false;
+  if (a.vencimiento) {
+    const v = new Date(a.vencimiento + "T00:00:00");
+    if (fecha > v) return false;
+  }
+  const dias = a.dias || [];
+  if (dias.length > 0 && !dias.includes(fecha.getDay())) return false;
+  return true;
+}
+
+// Para una tarjeta y categoría, devuelve la tasa efectiva (puntos/milla por dólar) y si viene de acelerador.
+function tasaEfectiva(t, categoria, fecha) {
+  const base = num(t.tasa_base);
+  const aceleradores = t.aceleradores || [];
+  const aplicables = aceleradores.filter(
+    (a) => a.categoria === categoria && aceleradorVigente(a, fecha)
+  );
+  if (aplicables.length === 0) {
+    return { tasa: base, multiplicador: 1, esAcelerador: false, acelerador: null };
+  }
+  // Si hay varios aceleradores vigentes para la misma categoría, toma el de mayor multiplicador.
+  const mejor = aplicables.reduce((m, a) =>
+    num(a.multiplicador) > num(m.multiplicador) ? a : m
+  );
+  return {
+    tasa: base * num(mejor.multiplicador),
+    multiplicador: num(mejor.multiplicador),
+    esAcelerador: true,
+    acelerador: mejor,
+  };
+}
+
+// Calcula el rendimiento en dólares de una compra en una tarjeta dada.
+// Si la tarjeta permite canjear puntos por millas (tasa_conversion_millas y valor_milla_canje
+// configurados), calcula ambas rutas de canje —efectivo y millas— y usa la de mayor valor
+// para el ranking, dejando el detalle de las dos disponible para mostrar en el simulador.
+function rendimiento(t, categoria, monto, fecha) {
+  const { tasa, multiplicador, esAcelerador } = tasaEfectiva(t, categoria, fecha);
+  const puntosGanados = num(monto) * tasa;
+
+  const valorPunto = num(t.valor_punto) / 100; // centavos -> dólares
+  const valorEfectivo = puntosGanados * valorPunto;
+
+  const millasPorPunto = num(t.tasa_conversion_millas); // ej. 0.67 millas por cada punto
+  const valorMillaCanje = num(t.valor_milla_canje) / 100; // centavos -> dólares
+  const tieneRutaMillas = millasPorPunto > 0 && valorMillaCanje > 0;
+  const millasObtenidas = tieneRutaMillas ? puntosGanados * millasPorPunto : 0;
+  const valorMillas = tieneRutaMillas ? millasObtenidas * valorMillaCanje : 0;
+
+  const valorDolares = tieneRutaMillas ? Math.max(valorEfectivo, valorMillas) : valorEfectivo;
+  const mejorRuta = tieneRutaMillas && valorMillas > valorEfectivo ? "millas" : "efectivo";
+
+  return {
+    puntosGanados, tasa, multiplicador, esAcelerador,
+    valorDolares, valorEfectivo,
+    tieneRutaMillas, millasObtenidas, valorMillas, mejorRuta,
+  };
+}
+
+// Rankea todas las tarjetas para una categoría y monto de compra dados. Devuelve de mejor a peor.
+function mejorTarjetaPara(tarjetas, categoria, monto, fecha) {
+  return tarjetas
+    .map((t) => ({ t, r: rendimiento(t, categoria, monto, fecha) }))
+    .sort((a, b) => b.r.valorDolares - a.r.valorDolares);
+}
+
+const CATEGORIAS = [
+  "Gasolinera",
+  "Supermercado",
+  "Restaurante",
+  "Copa Airlines / Aerolíneas",
+  "Escuela / Educación",
+  "Farmacia",
+  "Hotel",
+  "Gasto en el extranjero",
+  "Otros",
+];
+
+const DIAS_SEMANA = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const DIAS_CORTOS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+// Orden de despliegue: Lun..Dom (índices reales 1,2,3,4,5,6,0)
+const ORDEN_DIAS = [1, 2, 3, 4, 5, 6, 0];
+
 const ETIQUETA = {
   pagado: "Pagada este ciclo",
   sinsaldo: "Sin saldo",
@@ -274,9 +360,197 @@ function Dato({ etiqueta, valor, color }) {
   );
 }
 
+function SelectorDias({ dias, onChange }) {
+  const activos = dias || [];
+  const alternar = (idx) => {
+    const nuevo = activos.includes(idx) ? activos.filter((d) => d !== idx) : [...activos, idx];
+    onChange(nuevo);
+  };
+  return (
+    <div>
+      <span
+        style={{
+          display: "block", fontFamily: SANS, fontSize: 11, letterSpacing: 0.6,
+          textTransform: "uppercase", color: C.soft, marginBottom: 6,
+        }}
+      >
+        Días que aplica (ninguno = todos)
+      </span>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {ORDEN_DIAS.map((idx) => {
+          const on = activos.includes(idx);
+          return (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => alternar(idx)}
+              style={{
+                fontFamily: SANS, fontSize: 12.5, fontWeight: 600, padding: "8px 10px",
+                borderRadius: 8, minHeight: 36, cursor: "pointer",
+                border: `1px solid ${on ? C.jade : C.line}`,
+                background: on ? C.jade : "#fff",
+                color: on ? "#fff" : C.soft,
+              }}
+            >
+              {DIAS_CORTOS[idx]}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Flecha giratoria usada en todos los colapsables de la app (patrón visual consistente).
+function Flecha({ abierta }) {
+  return (
+    <span
+      style={{
+        display: "inline-block", fontSize: 11, color: C.soft, transition: "transform 0.15s ease",
+        transform: abierta ? "rotate(90deg)" : "rotate(0deg)",
+      }}
+    >
+      ▸
+    </span>
+  );
+}
+
+// Resumen de una línea de un acelerador para mostrar cuando está colapsado.
+function resumenAcelerador(a) {
+  const dias = a.dias || [];
+  const diasTxt = dias.length === 0 ? "todos los días" : dias.map((d) => DIAS_CORTOS[d]).join(" ");
+  const venceTxt = a.vencimiento ? `vence ${fmtFecha(new Date(a.vencimiento + "T00:00:00"))}` : "sin vencimiento";
+  return `${a.multiplicador || 1}x · ${venceTxt} · ${diasTxt}`;
+}
+
+function AceleradorEditor({ aceleradores, onChange }) {
+  const lista = aceleradores || [];
+  const [abiertoIdx, setAbiertoIdx] = useState(null);
+  const actualizarUno = (i, campo, valor) => {
+    const nueva = lista.map((a, idx) => (idx === i ? { ...a, [campo]: valor } : a));
+    onChange(nueva);
+  };
+  const quitar = (i) => {
+    onChange(lista.filter((_, idx) => idx !== i));
+    setAbiertoIdx(null);
+  };
+  const agregar = () => {
+    onChange([
+      ...lista,
+      { categoria: CATEGORIAS[0], multiplicador: 1, vencimiento: "", dias: [] },
+    ]);
+    setAbiertoIdx(lista.length);
+  };
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <span
+          style={{
+            fontFamily: SANS, fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase", color: C.soft,
+          }}
+        >
+          Aceleradores
+        </span>
+        <Boton variante="fantasma" onClick={agregar}>+ Agregar acelerador</Boton>
+      </div>
+      {lista.length === 0 && (
+        <p style={{ margin: 0, fontFamily: SANS, fontSize: 13, color: C.soft }}>
+          Sin aceleradores configurados.
+        </p>
+      )}
+      {lista.map((a, i) => {
+        const abierta = abiertoIdx === i;
+        return (
+          <div
+            key={i}
+            style={{
+              background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12,
+              marginBottom: 10, overflow: "hidden",
+            }}
+          >
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setAbiertoIdx(abierta ? null : i)}
+              onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setAbiertoIdx(abierta ? null : i))}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, padding: 14, cursor: "pointer",
+              }}
+            >
+              <Flecha abierta={abierta} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: SANS, fontSize: 14.5, fontWeight: 600, color: C.ink }}>
+                  {a.categoria || "Sin categoría"}
+                </div>
+                {!abierta && (
+                  <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.soft, marginTop: 2 }}>
+                    {resumenAcelerador(a)}
+                  </div>
+                )}
+              </div>
+            </div>
+            {abierta && (
+              <div style={{ padding: "0 14px 14px" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                  <label style={{ flex: "2 1 200px", display: "block" }}>
+                    <span
+                      style={{
+                        display: "block", fontFamily: SANS, fontSize: 11, letterSpacing: 0.6,
+                        textTransform: "uppercase", color: C.soft, marginBottom: 6,
+                      }}
+                    >
+                      Categoría
+                    </span>
+                    <select
+                      className="tj-input"
+                      value={a.categoria}
+                      onChange={(e) => actualizarUno(i, "categoria", e.target.value)}
+                      style={{
+                        width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 10,
+                        border: `1px solid ${C.line}`, background: "#fff", color: C.ink,
+                        fontFamily: SANS, fontSize: 15,
+                      }}
+                    >
+                      {CATEGORIAS.map((cat) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <Campo
+                    etiqueta="Multiplicador"
+                    valor={a.multiplicador}
+                    onChange={(v) => actualizarUno(i, "multiplicador", v)}
+                    tipo="number"
+                    ancho="1 1 120px"
+                    sufijo="x"
+                  />
+                  <Campo
+                    etiqueta="Vence"
+                    valor={a.vencimiento}
+                    onChange={(v) => actualizarUno(i, "vencimiento", v)}
+                    tipo="date"
+                    ancho="1 1 160px"
+                  />
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <SelectorDias dias={a.dias} onChange={(v) => actualizarUno(i, "dias", v)} />
+                </div>
+                <div style={{ marginTop: 12, textAlign: "right" }}>
+                  <Boton variante="peligro" onClick={() => quitar(i)}>Quitar acelerador</Boton>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ─────────────────────────── Fila de tarjeta ─────────────────────────── */
 function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar }) {
   const [confirmando, setConfirmando] = useState(false);
+  const [lealtadAbierta, setLealtadAbierta] = useState(false);
   const borde = c.nivel === "rojo" ? C.red : c.nivel === "ambar" ? C.amber : c.pagado ? C.green : C.line;
   const set = (campo) => (v) => onCambio({ ...t, [campo]: v });
 
@@ -353,6 +627,14 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar }) {
             <Campo etiqueta="Banco" valor={t.banco} onChange={set("banco")} ancho="1 1 160px" />
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12 }}>
+            <Campo
+              etiqueta="Uso exclusivo en (opcional)"
+              valor={t.uso_exclusivo}
+              onChange={set("uso_exclusivo")}
+              ancho="2 1 200px"
+            />
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12 }}>
             <Campo etiqueta="Día de corte" valor={t.dia_corte} onChange={set("dia_corte")} tipo="number" />
             <Campo etiqueta="Día pago de contado" valor={t.dia_contado} onChange={set("dia_contado")} tipo="number" />
             <Campo etiqueta="Día pago mínimo" valor={t.dia_minimo} onChange={set("dia_minimo")} tipo="number" />
@@ -366,6 +648,82 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar }) {
             <Campo etiqueta="Límite" valor={t.limite} onChange={set("limite")} tipo="number" sufijo="$" />
             <Campo etiqueta="Tasa anual" valor={t.tasa} onChange={set("tasa")} tipo="number" sufijo="%" />
             <Campo etiqueta="Nota" valor={t.nota} onChange={set("nota")} ancho="2 1 200px" />
+          </div>
+
+          <div style={{ marginTop: 22, paddingTop: 16, borderTop: `1px dashed ${C.line}` }}>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setLealtadAbierta((v) => !v)}
+              onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setLealtadAbierta((v) => !v))}
+              style={{
+                display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+                marginBottom: lealtadAbierta ? 12 : 0,
+              }}
+            >
+              <Flecha abierta={lealtadAbierta} />
+              <span
+                style={{
+                  fontFamily: SANS, fontSize: 11, letterSpacing: 0.7, textTransform: "uppercase",
+                  color: C.plum,
+                }}
+              >
+                Programa de lealtad{t.programa_lealtad ? ` · ${t.programa_lealtad}` : ""}
+              </span>
+            </div>
+
+            {lealtadAbierta && (
+              <>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                  <Campo
+                    etiqueta="Programa de lealtad"
+                    valor={t.programa_lealtad}
+                    onChange={set("programa_lealtad")}
+                    ancho="2 1 200px"
+                  />
+                  <Campo
+                    etiqueta="Tasa base"
+                    valor={t.tasa_base}
+                    onChange={set("tasa_base")}
+                    tipo="number"
+                    ancho="1 1 140px"
+                    sufijo="pts/$"
+                  />
+                  <Campo
+                    etiqueta="Valor del punto"
+                    valor={t.valor_punto}
+                    onChange={set("valor_punto")}
+                    tipo="number"
+                    ancho="1 1 140px"
+                    sufijo="¢"
+                  />
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.soft, marginBottom: 10 }}>
+                    Si los puntos también se pueden canjear por millas (opcional):
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                    <Campo
+                      etiqueta="Millas por punto"
+                      valor={t.tasa_conversion_millas}
+                      onChange={set("tasa_conversion_millas")}
+                      tipo="number"
+                      ancho="1 1 140px"
+                      sufijo="mi/pt"
+                    />
+                    <Campo
+                      etiqueta="Valor de la milla canjeada"
+                      valor={t.valor_milla_canje}
+                      onChange={set("valor_milla_canje")}
+                      tipo="number"
+                      ancho="1 1 160px"
+                      sufijo="¢"
+                    />
+                  </div>
+                </div>
+                <AceleradorEditor aceleradores={t.aceleradores} onChange={set("aceleradores")} />
+              </>
+            )}
           </div>
 
           <div
@@ -437,6 +795,8 @@ export default function App() {
   const [aviso, setAviso] = useState("");
   const [ultimoGuardado, setUltimoGuardado] = useState(null);
   const [sinGuardar, setSinGuardar] = useState(false);
+  const [simCategoria, setSimCategoria] = useState(CATEGORIAS[0]);
+  const [simMonto, setSimMonto] = useState(100);
   const temporizador = useRef(null);
   const primera = useRef(true);
   const hoy = useMemo(() => hoyFn(), []);
@@ -502,6 +862,13 @@ export default function App() {
         tasa: num(t.tasa) || 0,
         nota: t.nota || "",
         pagado_hasta: t.pagado_hasta || null,
+        uso_exclusivo: t.uso_exclusivo || "",
+        programa_lealtad: t.programa_lealtad || "",
+        tasa_base: num(t.tasa_base) || 0,
+        valor_punto: num(t.valor_punto) || 0,
+        aceleradores: t.aceleradores || [],
+        tasa_conversion_millas: num(t.tasa_conversion_millas) || 0,
+        valor_milla_canje: num(t.valor_milla_canje) || 0,
       }));
 
       if (tarjetasParaGuardar.length > 0) {
@@ -559,6 +926,43 @@ const login = async (e) => {
     return [...candidatas].sort((a, b) => b.c.flotanteHoy - a.c.flotanteHoy)[0];
   }, [conCalculo]);
 
+  // Las tarjetas cobrand (ej. PriceSmart, El Rey) solo se pueden usar en su propio comercio:
+  // no compiten por "mejor rendimiento" con el resto, así que quedan fuera del simulador general.
+  const tarjetasComparables = useMemo(
+    () => tarjetas.filter((t) => !(t.uso_exclusivo || "").trim()),
+    [tarjetas]
+  );
+
+  /* Simulador de compra: ranking de tarjetas por rendimiento en puntos/millas */
+  const rankingSimulador = useMemo(
+    () => mejorTarjetaPara(tarjetasComparables, simCategoria, simMonto, hoy),
+    [tarjetasComparables, simCategoria, simMonto, hoy]
+  );
+
+  // Solo tiene sentido elegir entre tarjetas cuando hay un acelerador vigente para la categoría;
+  // si ninguna tarjeta acelera, da igual cuál uses. Por eso el selector solo lista categorías
+  // con al menos un acelerador (no vencido) en alguna tarjeta comparable, más "Otras" para el resto.
+  const categoriasConAcelerador = useMemo(() => {
+    const set = new Set();
+    tarjetasComparables.forEach((t) => {
+      (t.aceleradores || []).forEach((a) => {
+        if (a.categoria && aceleradorVigente(a, hoy)) set.add(a.categoria);
+      });
+    });
+    return CATEGORIAS.filter((cat) => set.has(cat));
+  }, [tarjetasComparables, hoy]);
+
+  const categoriasSimulador = useMemo(
+    () => [...categoriasConAcelerador, "Otras"],
+    [categoriasConAcelerador]
+  );
+
+  useEffect(() => {
+    if (!categoriasSimulador.includes(simCategoria)) {
+      setSimCategoria(categoriasSimulador[0] || "Otras");
+    }
+  }, [categoriasSimulador]);
+
   /* Filtros */
   const visibles = useMemo(() => {
     let l = conCalculo.filter(({ t }) => {
@@ -588,7 +992,7 @@ const login = async (e) => {
     setAviso("Tarjeta eliminada.");
   };
   const agregar = () => {
-      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null };
+      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null, uso_exclusivo: "", programa_lealtad: "", tasa_base: 0, valor_punto: 0, aceleradores: [], tasa_conversion_millas: 0, valor_milla_canje: 0 };
       setTarjetas((prev) => [t, ...prev]);
       setAbierta(t.id);
       setOrden("nombre");
@@ -769,6 +1173,96 @@ const login = async (e) => {
               <strong>{fmtFecha(mejorCompra.c.venceCompraHoy)}</strong> — {mejorCompra.c.flotanteHoy} días
               de financiamiento sin interés.
             </div>
+          </div>
+        )}
+
+        {tarjetas.length > 0 && (
+          <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "18px 18px 16px", marginBottom: 22 }}>
+            <div style={{ fontFamily: SANS, fontSize: 11, letterSpacing: 0.7, textTransform: "uppercase", color: C.plum, marginBottom: 12 }}>
+              Simulador: con qué tarjeta pagar
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+              <label style={{ flex: "2 1 200px", display: "block" }}>
+                <span style={{ display: "block", fontFamily: SANS, fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase", color: C.soft, marginBottom: 6 }}>
+                  Categoría de la compra
+                </span>
+                <select
+                  value={simCategoria}
+                  onChange={(e) => setSimCategoria(e.target.value)}
+                  style={{
+                    width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 10,
+                    border: `1px solid ${C.line}`, background: "#fff", color: C.ink,
+                    fontFamily: SANS, fontSize: 16,
+                  }}
+                >
+                  {categoriasSimulador.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </label>
+              <Campo etiqueta="Monto de la compra" valor={simMonto} onChange={setSimMonto} tipo="number" ancho="1 1 160px" sufijo="$" />
+            </div>
+
+            {categoriasConAcelerador.length === 0 && (
+              <p style={{ margin: "0 0 14px", fontFamily: SANS, fontSize: 13, color: C.soft }}>
+                Ninguna tarjeta tiene aceleradores vigentes todavía — mientras no los cargues,
+                todas rinden según su tasa base.
+              </p>
+            )}
+
+            {simCategoria === "Otras" && (
+              <p style={{ margin: "0 0 14px", fontFamily: SANS, fontSize: 13, color: C.soft }}>
+                Sin acelerador para esta categoría: la diferencia entre tarjetas es mínima.
+              </p>
+            )}
+
+            {rankingSimulador.length === 0 ? (
+              <p style={{ margin: 0, fontFamily: SANS, fontSize: 14, color: C.soft }}>
+                Agrega tarjetas con programa de lealtad para comparar.
+              </p>
+            ) : (
+              rankingSimulador.map(({ t, r }, i) => (
+                <div
+                  key={t.id}
+                  style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    gap: 12, padding: "12px 0",
+                    borderTop: i === 0 ? "none" : `1px solid ${C.line}`,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: SERIF, fontSize: 17, color: C.ink, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      {i === 0 && <Chip nivel="verde">Mejor opción</Chip>}
+                      {t.nombre || "Sin nombre"}
+                    </div>
+                    <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.soft, marginTop: 3 }}>
+                      {t.programa_lealtad || "Sin programa de lealtad"} ·{" "}
+                      {r.esAcelerador ? `acelerador ${r.multiplicador}x` : "tasa base"} ·{" "}
+                      {r.tasa.toFixed(2)} pts/$
+                    </div>
+                    {r.tieneRutaMillas && (
+                      <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.soft, marginTop: 4 }}>
+                        Efectivo: {money(r.valorEfectivo)}
+                        {"  ·  "}
+                        Millas: {r.millasObtenidas.toFixed(0)} mi ≈ {money(r.valorMillas)}
+                        {"  "}
+                        <span style={{ color: C.jade, fontWeight: 600 }}>
+                          (mejor: {r.mejorRuta === "millas" ? "canjear por millas" : "canjear por efectivo"})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontFamily: MONO, fontSize: 17, color: i === 0 ? C.jade : C.ink }}>
+                      {r.puntosGanados.toFixed(0)} pts
+                    </div>
+                    <div style={{ fontFamily: MONO, fontSize: 12.5, color: C.soft }}>
+                      ≈ {money(r.valorDolares)}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
 
