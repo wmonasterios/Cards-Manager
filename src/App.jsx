@@ -205,6 +205,25 @@ const CATEGORIAS = [
   "Otros",
 ];
 
+// Marcas de tarjeta soportadas. Los SVG viven en public/logos/ (subidos por el usuario).
+const MARCAS_TARJETA = [
+  { valor: "", etiqueta: "Sin especificar" },
+  { valor: "visa", etiqueta: "Visa" },
+  { valor: "mastercard", etiqueta: "Mastercard" },
+  { valor: "amex", etiqueta: "American Express" },
+];
+
+function LogoMarca({ marca, alto = 22 }) {
+  if (!marca) return null;
+  return (
+    <img
+      src={`/logos/${marca}.svg`}
+      alt={marca}
+      style={{ height: alto, width: "auto", display: "block" }}
+    />
+  );
+}
+
 // Icono y color de fondo por categoría, estilo "cuadradito" tipo Apple Wallet transactions.
 const CATEGORIA_ICONO = {
   "Gasolinera": { Icono: Fuel, bg: "#B0261C" },
@@ -667,6 +686,11 @@ function TarjetaVisual({ t, c }) {
           </div>
         </div>
       </div>
+      {t.marca && (
+        <div style={{ marginTop: 16 }}>
+          <LogoMarca marca={t.marca} alto={22} />
+        </div>
+      )}
     </div>
   );
 }
@@ -731,6 +755,31 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar }) {
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 16 }}>
             <Campo etiqueta="Nombre" valor={t.nombre} onChange={set("nombre")} ancho="2 1 200px" />
             <Campo etiqueta="Banco" valor={t.banco} onChange={set("banco")} ancho="1 1 160px" />
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12 }}>
+            <label style={{ flex: "1 1 160px", display: "block" }}>
+              <span
+                style={{
+                  display: "block", fontFamily: SANS, fontSize: 11, letterSpacing: 0.6,
+                  textTransform: "uppercase", color: C.soft, marginBottom: 6,
+                }}
+              >
+                Marca
+              </span>
+              <select
+                value={t.marca || ""}
+                onChange={(e) => set("marca")(e.target.value)}
+                style={{
+                  width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 6,
+                  border: `1px solid ${C.line}`, background: "#fff", color: C.ink,
+                  fontFamily: SANS, fontSize: 16,
+                }}
+              >
+                {MARCAS_TARJETA.map((m) => (
+                  <option key={m.valor} value={m.valor}>{m.etiqueta}</option>
+                ))}
+              </select>
+            </label>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12 }}>
             <Campo
@@ -968,6 +1017,7 @@ export default function App() {
         tasa: num(t.tasa) || 0,
         nota: t.nota || "",
         pagado_hasta: t.pagado_hasta || null,
+        marca: t.marca || "",
         uso_exclusivo: t.uso_exclusivo || "",
         programa_lealtad: t.programa_lealtad || "",
         tasa_base: num(t.tasa_base) || 0,
@@ -1098,7 +1148,7 @@ const login = async (e) => {
     setAviso("Tarjeta eliminada.");
   };
   const agregar = () => {
-      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null, uso_exclusivo: "", programa_lealtad: "", tasa_base: 0, valor_punto: 0, aceleradores: [], tasa_conversion_millas: 0, valor_milla_canje: 0 };
+      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", marca: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null, uso_exclusivo: "", programa_lealtad: "", tasa_base: 0, valor_punto: 0, aceleradores: [], tasa_conversion_millas: 0, valor_milla_canje: 0 };
       setTarjetas((prev) => [t, ...prev]);
       setAbierta(t.id);
       setOrden("nombre");
@@ -1343,6 +1393,7 @@ const login = async (e) => {
                     <div style={{ fontFamily: SANS, fontWeight: 600, fontSize: 17, color: C.ink, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       {i === 0 && <Chip nivel="verde">Mejor opción</Chip>}
                       {t.nombre || "Sin nombre"}
+                      {t.marca && <LogoMarca marca={t.marca} alto={16} />}
                     </div>
                     <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.soft, marginTop: 3 }}>
                       {t.programa_lealtad || "Sin programa de lealtad"} ·{" "}
