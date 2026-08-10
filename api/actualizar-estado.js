@@ -1,10 +1,11 @@
 // POST /api/actualizar-estado
-// Body: { userId, banco }  (banco: "bac" | "aliado" | "davivienda" | "scotiabank")
+// Body: { userId, banco, ultimos4? }  (banco: "bac" | "aliado" | "davivienda" | "scotiabank")
 //
-// Flujo: toma el refresh_token de Gmail guardado para ese usuario, busca el correo más
-// reciente de estado de cuenta de ese banco, descarga el PDF adjunto, extrae el texto y
-// lo parsea con la lógica de api/_lib/parsers.js. Devuelve los datos listos para
-// autocompletar el formulario de la tarjeta — no escribe nada en Supabase directamente,
+// Flujo: toma el refresh_token de Gmail guardado para ese usuario, busca varios correos
+// recientes de estado de cuenta de ese banco (porque puede haber más de una tarjeta del
+// mismo banco), descarga y parsea el PDF de cada uno, y elige el que corresponda a la
+// tarjeta pedida — matcheando por los últimos 4 dígitos si se proporcionaron. Devuelve los
+// datos listos para autocompletar el formulario; no escribe nada en Supabase directamente,
 // el usuario confirma en la UI antes de guardar.
 import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
@@ -16,16 +17,32 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Remitente y texto de asunto/cuerpo típico de cada banco, usado para buscar en Gmail.
+// Remitente y texto de asunto típico de cada banco, usado para buscar en Gmail.
 const CONFIG_BANCO = {
-  bac: { query: 'from:(pa.baccredomatic.net) subject:("Estado de Cuenta")', filenameHint: "EstadoCta" },
-  aliado: { query: 'from:(bancoaliado.com) subject:("Estado de Cuenta")', filenameHint: "" },
-  davivienda: { query: 'from:(estados.davivienda.com.pa) subject:("Estado de cuenta")', filenameHint: "" },
-  scotiabank: { query: 'from:(scotiabank.com) subject:("Estado de cuenta")', filenameHint: "" },
+  bac: { query: 'from:(pa.baccredomatic.net) subject:("Estado de Cuenta")' },
+  aliado: { query: 'from:(bancoaliado.com) subject:("Estado de Cuenta")' },
+  davivienda: { query: 'from:(estados.davivienda.com.pa) subject:("Estado de cuenta")' },
+  scotiabank: { query: 'from:(scotiabank.com) subject:("Estado de cuenta")' },
 };
 
 function b64urlToBuffer(data) {
-  return Buffer.from(data, "base64");
+  return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+
+// Encuentra el primer adjunto .pdf dentro de un mensaje de Gmail (recorre subpartes,
+// porque algunos correos anidan el adjunto dentro de un multipart/mixed).
+function encontrarAdjuntoPDF(payload) {
+  const partes = payload?.parts || [];
+  for (const p of partes) {
+    if (p.filename && p.filename.toLowerCase().endsWith(".pdf") && p.body?.attachmentId) {
+      return p;
+    }
+    if (p.parts) {
+      const anidado = encontrarAdjuntoPDF(p);
+      if (anidado) return anidado;
+    }
+  }
+  return null;
 }
 
 export default async function handler(req, res) {
@@ -34,7 +51,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { userId, banco } = req.body || {};
+  const { userId, banco, ultimos4 } = req.body || {};
   if (!userId || !banco) {
     res.status(400).json({ error: "Faltan userId o banco" });
     return;
@@ -67,11 +84,11 @@ export default async function handler(req, res) {
 
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-    // 2. Buscar el correo más reciente que matchee el banco.
+    // 2. Buscar varios correos recientes del banco (puede haber más de una tarjeta).
     const searchRes = await gmail.users.messages.list({
       userId: "me",
       q: `${config.query} has:attachment newer_than:2m`,
-      maxResults: 5,
+      maxResults: 8,
     });
 
     const messages = searchRes.data.messages || [];
@@ -80,32 +97,52 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Los resultados de Gmail vienen ordenados del más reciente al más antiguo.
-    const message = await gmail.users.messages.get({ userId: "me", id: messages[0].id, format: "full" });
+    // 3. Descargar y parsear cada correo hasta encontrar el que matchea los últimos 4
+    // dígitos pedidos. Si no se pidieron dígitos (tarjeta sin configurar), nos quedamos
+    // con el primero (el más reciente) tal como antes.
+    const digitosLimpios = (ultimos4 || "").replace(/\D/g, "").slice(-4);
+    let elegido = null;
+    let candidatosVistos = 0;
 
-    // 3. Encontrar el adjunto PDF dentro del mensaje.
-    const parts = message.data.payload?.parts || [];
-    const pdfPart = parts.find(
-      (p) => p.filename && p.filename.toLowerCase().endsWith(".pdf") && p.body?.attachmentId
-    );
-    if (!pdfPart) {
-      res.status(404).json({ error: "sin_pdf", message: "El correo encontrado no tiene un PDF adjunto." });
+    for (const m of messages) {
+      const message = await gmail.users.messages.get({ userId: "me", id: m.id, format: "full" });
+      const pdfPart = encontrarAdjuntoPDF(message.data.payload);
+      if (!pdfPart) continue;
+
+      const attachment = await gmail.users.messages.attachments.get({
+        userId: "me",
+        messageId: message.data.id,
+        id: pdfPart.body.attachmentId,
+      });
+      const pdfBuffer = b64urlToBuffer(attachment.data.data);
+      const { text } = await pdfParse(pdfBuffer);
+      const datos = parseEstadoCuenta(text, banco);
+
+      candidatosVistos++;
+
+      if (!digitosLimpios) {
+        elegido = datos; // sin dígitos pedidos: nos quedamos con el primer correo válido
+        break;
+      }
+      if (datos.ultimos_4 === digitosLimpios) {
+        elegido = datos;
+        break;
+      }
+    }
+
+    if (!elegido) {
+      if (digitosLimpios) {
+        res.status(404).json({
+          error: "sin_match",
+          message: `Se revisaron ${candidatosVistos} correos de ${banco} pero ninguno coincide con los últimos 4 dígitos ${digitosLimpios}. Verifica el dato o que el estado de cuenta haya llegado.`,
+        });
+      } else {
+        res.status(404).json({ error: "sin_pdf", message: "No se encontró un PDF legible en los correos recientes." });
+      }
       return;
     }
 
-    const attachment = await gmail.users.messages.attachments.get({
-      userId: "me",
-      messageId: message.data.id,
-      id: pdfPart.body.attachmentId,
-    });
-
-    const pdfBuffer = b64urlToBuffer(attachment.data.data.replace(/-/g, "+").replace(/_/g, "/"));
-
-    // 4. Extraer texto del PDF y parsear según el banco.
-    const { text } = await pdfParse(pdfBuffer);
-    const datos = parseEstadoCuenta(text, banco);
-
-    res.status(200).json({ ok: true, datos, mensajeId: message.data.id });
+    res.status(200).json({ ok: true, datos: elegido });
   } catch (err) {
     console.error("Error en /api/actualizar-estado:", err);
     res.status(500).json({ error: "error_interno", message: String(err?.message || err) });

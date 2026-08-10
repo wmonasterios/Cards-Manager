@@ -709,6 +709,7 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, userId }
   const [lealtadAbierta, setLealtadAbierta] = useState(false);
   const [actualizando, setActualizando] = useState(false);
   const [avisoGmail, setAvisoGmail] = useState("");
+  const [avisoGmailTipo, setAvisoGmailTipo] = useState("info"); // "ok" | "error" | "info"
   const borde = c.nivel === "rojo" ? C.red : c.nivel === "ambar" ? C.amber : c.pagado ? C.green : C.line;
   const set = (campo) => (v) => onCambio({ ...t, [campo]: v });
 
@@ -718,10 +719,12 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, userId }
   // igual que si los hubiera tecleado a mano.
   const actualizarDesdeGmail = async () => {
     if (!t.banco_gmail) {
+      setAvisoGmailTipo("error");
       setAvisoGmail("Elegí primero el banco (para actualizar desde Gmail) arriba.");
       return;
     }
     if (!userId) {
+      setAvisoGmailTipo("error");
       setAvisoGmail("No se pudo identificar tu usuario.");
       return;
     }
@@ -731,10 +734,11 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, userId }
       const resp = await fetch("/api/actualizar-estado", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, banco: t.banco_gmail }),
+        body: JSON.stringify({ userId, banco: t.banco_gmail, ultimos4: t.ultimos_4_digitos }),
       });
       const json = await resp.json();
       if (!resp.ok) {
+        setAvisoGmailTipo("error");
         if (json.error === "no_conectado") {
           setAvisoGmail("Gmail no está conectado. Conectalo desde el botón de arriba.");
         } else {
@@ -752,8 +756,10 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, userId }
         minimo: d.pago_minimo ?? t.minimo,
         limite: d.limite || t.limite,
       });
+      setAvisoGmailTipo("ok");
       setAvisoGmail("Actualizado desde tu último estado de cuenta. Revisa los datos antes de guardar.");
     } catch (err) {
+      setAvisoGmailTipo("error");
       setAvisoGmail("Error de conexión al actualizar desde Gmail.");
     } finally {
       setActualizando(false);
@@ -862,14 +868,37 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, userId }
                 ))}
               </select>
             </label>
+            {t.banco_gmail && (
+              <Campo
+                etiqueta="Últimos 4 dígitos"
+                valor={t.ultimos_4_digitos}
+                onChange={set("ultimos_4_digitos")}
+                ancho="1 1 140px"
+              />
+            )}
           </div>
           {t.banco_gmail && (
             <div style={{ marginTop: 12 }}>
+              {!t.ultimos_4_digitos && (
+                <p style={{ margin: "0 0 8px", fontFamily: SANS, fontSize: 13, color: C.amber }}>
+                  Si tenés más de una tarjeta de este banco, agregá los últimos 4 dígitos para
+                  que traiga la correcta.
+                </p>
+              )}
               <Boton variante="suave" onClick={actualizarDesdeGmail} disabled={actualizando}>
                 {actualizando ? "Buscando en Gmail…" : "Actualizar desde Gmail"}
               </Boton>
               {avisoGmail && (
-                <p style={{ margin: "8px 0 0", fontFamily: SANS, fontSize: 13, color: C.soft }}>
+                <p
+                  style={{
+                    margin: "8px 0 0",
+                    fontFamily: SANS,
+                    fontSize: 13,
+                    fontWeight: avisoGmailTipo === "error" ? 600 : 400,
+                    color: avisoGmailTipo === "error" ? C.red : avisoGmailTipo === "ok" ? C.green : C.soft,
+                  }}
+                >
+                  {avisoGmailTipo === "error" ? "⚠ " : avisoGmailTipo === "ok" ? "✓ " : ""}
                   {avisoGmail}
                 </p>
               )}
@@ -1150,6 +1179,7 @@ export default function App() {
           pagado_hasta: t.pagado_hasta || null,
           marca: t.marca || "",
           banco_gmail: t.banco_gmail || "",
+          ultimos_4_digitos: t.ultimos_4_digitos || "",
           uso_exclusivo: t.uso_exclusivo || "",
           programa_lealtad: t.programa_lealtad || "",
           tasa_base: num(t.tasa_base) || 0,
@@ -1309,7 +1339,7 @@ const login = async (e) => {
     setAviso("Tarjeta eliminada.");
   };
   const agregar = () => {
-      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", marca: "", banco_gmail: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null, uso_exclusivo: "", programa_lealtad: "", tasa_base: 0, valor_punto: 0, aceleradores: [], tasa_conversion_millas: 0, valor_milla_canje: 0 };
+      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", marca: "", banco_gmail: "", ultimos_4_digitos: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null, uso_exclusivo: "", programa_lealtad: "", tasa_base: 0, valor_punto: 0, aceleradores: [], tasa_conversion_millas: 0, valor_milla_canje: 0 };
       setTarjetas((prev) => [t, ...prev]);
       setAbierta(t.id);
       setOrden("nombre");

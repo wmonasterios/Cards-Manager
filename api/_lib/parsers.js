@@ -88,12 +88,20 @@ function parseBAC(text) {
   m = /Producto\s+(.+?)(?:\s+Pago M[íi]nimo|\s*$)/m.exec(text);
   if (m) out.producto = m[1].trim();
 
+  // "N° Cuenta 4101-****-****-8259" -> últimos 4 dígitos, para distinguir entre varias
+  // tarjetas del mismo banco (ej. dos tarjetas BAC).
+  m = /N[°º]\s*Cuenta\s+[\d*-]+-(\d{4})\b/.exec(text);
+  if (m) out.ultimos_4 = m[1];
+
   return out;
 }
 
 /* ─────────────────────────── Parser Banco Aliado ─────────────────────────── */
 // Formato: "FECHA DE CORTE PAGAR ANTES DE" seguido de las dos fechas en la línea
 // siguiente. "SALDO AL CORTE PAGO MINIMO" seguido de los dos montos.
+// Aliado no imprime el número de la tarjeta principal en el cuerpo del PDF (solo el de
+// tarjetas adicionales, si las hay), así que sus últimos 4 dígitos se resuelven aparte,
+// a partir del nombre del archivo adjunto (ver api/actualizar-estado.js).
 function parseAliado(text) {
   const out = { banco: "aliado" };
 
@@ -117,6 +125,12 @@ function parseAliado(text) {
 
   m = /^(VISA[^\n]+|MASTERCARD[^\n]+|AMERICAN EXPRESS[^\n]+)$/m.exec(text);
   if (m) out.producto = m[1].trim();
+
+  // Los últimos 4 dígitos de la tarjeta principal aparecen junto al nombre del titular,
+  // ej. "MONASTERIOS/WILMER 4174-99XX-XXXX-1675" (no bajo "NUMERO DE CUENTA", que
+  // corresponde a un identificador distinto, no a la tarjeta física).
+  m = /[A-ZÁÉÍÓÚÑ]+\/[A-ZÁÉÍÓÚÑ]+\s+[\dXx*-]+-(\d{4})\b/.exec(text);
+  if (m) out.ultimos_4 = m[1];
 
   return out;
 }
@@ -150,6 +164,10 @@ function parseScotiaDavivienda(text, banco) {
 
   m = /^(VISA[^\n]*?|MASTERCARD[^\n]*?|AMEX[^\n]*?|AMERICAN EXPRESS[^\n]*?|DORADA[^\n]*?|BLUE[^\n]*?)(?:\s+Fecha de corte|$)/m.exec(text);
   if (m) out.producto = m[1].trim();
+
+  // "Número Tarjeta : ************5181" -> últimos 4 dígitos.
+  m = /N[uú]mero Tarjeta\s*:\s*\**(\d{4})/.exec(text);
+  if (m) out.ultimos_4 = m[1];
 
   return out;
 }
