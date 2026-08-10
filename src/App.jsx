@@ -728,6 +728,17 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, userId }
       setAvisoGmail("No se pudo identificar tu usuario.");
       return;
     }
+    // Si todavía no se marcó como pagado el ciclo actual y hay saldo pendiente, avisamos
+    // antes de pisar esos datos con el estado de cuenta más nuevo: una vez reemplazados,
+    // se pierde la foto exacta de cuánto se debía en el ciclo anterior (aunque el banco ya
+    // arrastra ese saldo al nuevo estado, así que no es una pérdida de dinero, solo de vista).
+    if (!c.pagado && num(t.saldo) > 0) {
+      const continuar = window.confirm(
+        `Todavía no marcaste esta tarjeta como pagada y tiene un saldo pendiente de $${num(t.saldo).toFixed(2)}.\n\n` +
+        `Si actualizás ahora vas a reemplazar estos datos con el estado de cuenta más reciente. ¿Continuar?`
+      );
+      if (!continuar) return;
+    }
     setActualizando(true);
     setAvisoGmail("");
     try {
