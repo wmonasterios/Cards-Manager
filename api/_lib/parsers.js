@@ -64,33 +64,64 @@ function isoFromDDMMYY(s) {
 function parseBAC(text) {
   const out = { banco: "bac" };
 
-  let m = /Fecha de Corte\s+(\d{2}\/\d{2}\/\d{4})/.exec(text);
+  // pdf-parse (Node, usado en producción) pega la etiqueta y el valor sin espacio entre
+  // medio (ej. "Fecha de Corte03/08/2026", "Saldo$505.47", "N° Cuenta4101-****-****-8259"),
+  // a diferencia de la herramienta usada para validar los patrones en local, que sí dejaba
+  // un espacio. Se prueba primero el patrón "pegado" (el real en producción) y, si no
+  // matchea, se cae al patrón "con espacio" como respaldo.
+
+  let m = /Fecha de Corte\s*(\d{2}\/\d{2}\/\d{4})/.exec(text);
   if (m) out.fecha_corte = isoFromDDMMYYYY(m[1]);
 
-  m = /Saldo\s+\$([\d,]+\.\d{2}-?)/.exec(text);
+  // "Saldo$505.47" (no "Saldo Anterior$..." ni "SALDO$..." en mayúsculas, que también
+  // aparecen en el documento con otro significado o en otra sección).
+  m = /\bSaldo\$([\d,]+\.\d{2}-?)/.exec(text);
   if (m) out.saldo = parseAmount(m[1]);
+  else {
+    m = /Saldo\s+\$([\d,]+\.\d{2}-?)/.exec(text);
+    if (m) out.saldo = parseAmount(m[1]);
+  }
 
-  m = /Pago\s*M[íi]nimo\s+\$([\d,]+\.\d{2})/.exec(text);
+  m = /Pago\s*M[íi]nimo\$([\d,]+\.\d{2})/.exec(text);
   if (m) out.pago_minimo = parseAmount(m[1]);
+  else {
+    m = /Pago\s*M[íi]nimo\s+\$([\d,]+\.\d{2})/.exec(text);
+    if (m) out.pago_minimo = parseAmount(m[1]);
+  }
 
-  m = /Pago de Contado\s+\$([\d,]+\.\d{2})/.exec(text);
+  m = /Pago de Contado\$([\d,]+\.\d{2})/.exec(text);
   if (m) out.pago_contado = parseAmount(m[1]);
+  else {
+    m = /Pago de Contado\s+\$([\d,]+\.\d{2})/.exec(text);
+    if (m) out.pago_contado = parseAmount(m[1]);
+  }
 
-  m = /Fecha L[íi]mite de Pago de Contado\s+(\d{1,2}\/[A-ZÁÉÍÓÚ]{3}\/\d{4})/i.exec(text);
+  // "Fecha Límite de Pago de Contado19/AGO/2026" -- ojo, "Fecha Límite de Pago" (sin "de
+  // Contado") es un prefijo literal de esta misma frase; al exigir la fecha pegada
+  // inmediatamente después de cada frase completa, cada patrón cae naturalmente en la
+  // ocurrencia correcta sin confundirlas entre sí.
+  m = /Fecha L[íi]mite de Pago de Contado\s*(\d{1,2}\/[A-ZÁÉÍÓÚ]{3}\/\d{4})/i.exec(text);
   if (m) out.fecha_pago_contado = isoFromDDMESYYYY(m[1]);
 
-  m = /Fecha L[íi]mite de Pago\s+(\d{1,2}\/[A-ZÁÉÍÓÚ]{3}\/\d{4})/i.exec(text);
+  m = /Fecha L[íi]mite de Pago\s*(\d{1,2}\/[A-ZÁÉÍÓÚ]{3}\/\d{4})/i.exec(text);
   if (m) out.fecha_pago_minimo = isoFromDDMESYYYY(m[1]);
 
-  m = /L[íi]mite\s+\$([\d,]+\.\d{2})/.exec(text);
+  m = /L[íi]mite\$([\d,]+\.\d{2})/.exec(text);
   if (m) out.limite = parseAmount(m[1]);
+  else {
+    m = /L[íi]mite\s+\$([\d,]+\.\d{2})/.exec(text);
+    if (m) out.limite = parseAmount(m[1]);
+  }
 
-  m = /Producto\s+(.+?)(?:\s+Pago M[íi]nimo|\s*$)/m.exec(text);
+  // Corta en el salto de línea (formato nuevo, pegado) o al toparse con la siguiente
+  // etiqueta conocida en la misma línea (formato viejo, con espacios), lo que aparezca
+  // primero -- evita arrastrar "Pago Mínimo $20.00" al nombre del producto.
+  m = /Producto\s*(.+?)(?:\n|\s*Pago M[íi]nimo|\s*L[íi]mite)/.exec(text);
   if (m) out.producto = m[1].trim();
 
-  // "N° Cuenta 4101-****-****-8259" -> últimos 4 dígitos, para distinguir entre varias
+  // "N° Cuenta4101-****-****-8259" -> últimos 4 dígitos, para distinguir entre varias
   // tarjetas del mismo banco (ej. dos tarjetas BAC).
-  m = /N[°º]\s*Cuenta\s+[\d*-]+-(\d{4})\b/.exec(text);
+  m = /N[°º]\s*Cuenta\s*[\d*-]+-(\d{4})\b/.exec(text);
   if (m) out.ultimos_4 = m[1];
 
   return out;
