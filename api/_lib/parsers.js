@@ -169,22 +169,52 @@ function parseScotiaDavivienda(text, banco) {
   let m = /Fecha de corte Actual\s*:\s*(\d{2}\/\d{2}\/\d{4})/.exec(text);
   if (m) out.fecha_corte = isoFromDDMMYYYY(m[1]);
 
-  m = /Saldo Actual\s+([\d,]+\.\d{2}-?)/.exec(text);
-  if (m) out.saldo = parseAmount(m[1]);
-
-  m = /Pago\s*M[íi]nimo\s+([\d,]+\.\d{2})/.exec(text);
-  if (m) out.pago_minimo = parseAmount(m[1]);
-
-  m = /Pagar antes de\s+(\d{2}\/\d{2}\/\d{4})/.exec(text);
-  if (m) {
-    const fecha = isoFromDDMMYYYY(m[1]);
+  // pdf-parse (Node, usado en producción) pega la etiqueta y el valor sin espacio entre
+  // medio (ej. "Saldo Actual1,844.31"), a diferencia de la herramienta usada para validar
+  // los patrones en local. Además "Saldo Actual" aparece más de una vez en el documento
+  // (también bajo "EXTRAFINANCIAMIENTO", con $0.00), así que anclamos todo el bloque
+  // "Información de la Cuenta" completo para tomar los valores correctos sin ambigüedad:
+  //   Información de la CuentaDólares
+  //   Saldo Actual1,844.31
+  //   Límite de Crédito34,000.00
+  //   Pago Mínimo27.85
+  //   Monto Atrasado0.00
+  //   Crédito Disponible21,387.29
+  //   Tasa de interés nominal20.50%
+  //   Tasa de interés efectiva22.53%
+  //   Pagar antes de11/08/2026
+  const bloque =
+    /Informaci[óo]n de la Cuenta\s*D[óo]lares\s*\n\s*Saldo Actual([\d,]+\.\d{2}-?)\s*\n\s*L[íi]mite de Cr[ée]dito([\d,]+\.\d{2})\s*\n\s*Pago\s*M[íi]nimo([\d,]+\.\d{2})\s*\n\s*Monto Atrasado[\d,]+\.\d{2}\s*\n\s*Cr[ée]dito Disponible[\d,]+\.\d{2}\s*\n\s*Tasa de inter[ée]s nominal[\d.]+%\s*\n\s*Tasa de inter[ée]s efectiva[\d.]+%\s*\n\s*Pagar antes de(\d{2}\/\d{2}\/\d{4})/.exec(
+      text
+    );
+  if (bloque) {
+    out.saldo = parseAmount(bloque[1]);
+    out.limite = parseAmount(bloque[2]);
+    out.pago_minimo = parseAmount(bloque[3]);
+    const fecha = isoFromDDMMYYYY(bloque[4]);
     out.fecha_pago_minimo = fecha;
     out.fecha_pago_contado = fecha;
     out.pago_contado = out.saldo; // sin distinción de pronto pago en este formato
-  }
+  } else {
+    // Respaldo: patrones "clásicos" con espacio entre etiqueta y valor, por si algún
+    // estado de cuenta se extrae en ese formato.
+    m = /Saldo Actual\s+([\d,]+\.\d{2}-?)/.exec(text);
+    if (m) out.saldo = parseAmount(m[1]);
 
-  m = /L[íi]mite de Cr[eé]dito\s+([\d,]+\.\d{2})/.exec(text);
-  if (m) out.limite = parseAmount(m[1]);
+    m = /Pago\s*M[íi]nimo\s+([\d,]+\.\d{2})/.exec(text);
+    if (m) out.pago_minimo = parseAmount(m[1]);
+
+    m = /Pagar antes de\s+(\d{2}\/\d{2}\/\d{4})/.exec(text);
+    if (m) {
+      const fecha = isoFromDDMMYYYY(m[1]);
+      out.fecha_pago_minimo = fecha;
+      out.fecha_pago_contado = fecha;
+      out.pago_contado = out.saldo;
+    }
+
+    m = /L[íi]mite de Cr[eé]dito\s+([\d,]+\.\d{2})/.exec(text);
+    if (m) out.limite = parseAmount(m[1]);
+  }
 
   m = /^(VISA[^\n]*?|MASTERCARD[^\n]*?|AMEX[^\n]*?|AMERICAN EXPRESS[^\n]*?|DORADA[^\n]*?|BLUE[^\n]*?)(?:\s+Fecha de corte|$)/m.exec(text);
   if (m) out.producto = m[1].trim();
