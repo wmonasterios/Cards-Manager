@@ -38,15 +38,36 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (tokens.refresh_token) {
-      // Guarda o actualiza el refresh_token. Solo llega refresh_token la primera vez que
-      // el usuario autoriza (o si se fuerza prompt=consent, como hacemos en /api/auth/google).
-      await supabaseAdmin
-        .from("google_tokens")
-        .upsert(
-          { user_id: userId, refresh_token: tokens.refresh_token, updated_at: new Date().toISOString() },
-          { onConflict: "user_id" }
-        );
+    if (!tokens.refresh_token) {
+      console.error(
+        "Callback de Google sin refresh_token. Esto pasa si Google ya había emitido uno antes y no se forzó consentimiento de nuevo. tokens recibidos:",
+        Object.keys(tokens)
+      );
+      res.status(200).send(
+        "Google no envió un token de acceso permanente (refresh_token). Esto suele pasar si ya habías conectado antes: " +
+        "andá a https://myaccount.google.com/permissions, quitale el acceso a esta app, y volvé a intentar conectar desde el botón. " +
+        "Podés cerrar esta pestaña."
+      );
+      return;
+    }
+
+    // Guarda o actualiza el refresh_token. Solo llega refresh_token la primera vez que
+    // el usuario autoriza (o si se fuerza prompt=consent, como hacemos en /api/auth/google).
+    const { error: upsertErr } = await supabaseAdmin
+      .from("google_tokens")
+      .upsert(
+        { user_id: userId, refresh_token: tokens.refresh_token, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" }
+      );
+
+    if (upsertErr) {
+      console.error("Error guardando refresh_token en Supabase:", upsertErr);
+      res.status(500).send(
+        "Se obtuvo el permiso de Google pero no se pudo guardar en la base de datos: " +
+        (upsertErr.message || String(upsertErr)) +
+        ". Revisá que la tabla google_tokens exista con las columnas correctas."
+      );
+      return;
     }
 
     // Redirige de vuelta a la app con un aviso de éxito.
