@@ -51,21 +51,36 @@ export default async function handler(req, res) {
       return;
     }
 
+    console.log(
+      "Callback Google: guardando token. userId=", userId,
+      "keyPrefix=", (process.env.SUPABASE_SERVICE_ROLE_KEY || "").slice(0, 12),
+      "url=", process.env.VITE_SUPABASE_URL
+    );
+
     // Guarda o actualiza el refresh_token. Solo llega refresh_token la primera vez que
     // el usuario autoriza (o si se fuerza prompt=consent, como hacemos en /api/auth/google).
-    const { error: upsertErr } = await supabaseAdmin
+    // Se pide .select() para forzar que Postgres devuelva la fila escrita (o el error real,
+    // en vez de quedarnos con una respuesta vacía si algo lo bloquea silenciosamente, ej. RLS).
+    const { data: upsertData, error: upsertErr, status: upsertStatus } = await supabaseAdmin
       .from("google_tokens")
       .upsert(
         { user_id: userId, refresh_token: tokens.refresh_token, updated_at: new Date().toISOString() },
         { onConflict: "user_id" }
-      );
+      )
+      .select();
 
-    if (upsertErr) {
-      console.error("Error guardando refresh_token en Supabase:", upsertErr);
+    console.log(
+      "Callback Google: resultado upsert. status=", upsertStatus,
+      "filas devueltas=", upsertData?.length,
+      "error=", upsertErr
+    );
+
+    if (upsertErr || !upsertData || upsertData.length === 0) {
+      console.error("Error guardando refresh_token en Supabase:", upsertErr, "data:", upsertData);
       res.status(500).send(
-        "Se obtuvo el permiso de Google pero no se pudo guardar en la base de datos: " +
-        (upsertErr.message || String(upsertErr)) +
-        ". Revisá que la tabla google_tokens exista con las columnas correctas."
+        "Se obtuvo el permiso de Google pero no se guardó en la base de datos (0 filas escritas). " +
+        "Error: " + (upsertErr?.message || "ninguno reportado, revisá RLS o la service role key") +
+        ". Revisá los logs de Vercel para más detalle."
       );
       return;
     }
