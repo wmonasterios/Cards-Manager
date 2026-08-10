@@ -205,6 +205,15 @@ const CATEGORIAS = [
   "Otros",
 ];
 
+// Bancos soportados por la actualización automática desde Gmail (ver api/actualizar-estado.js).
+const BANCOS_GMAIL = [
+  { valor: "", etiqueta: "No configurado" },
+  { valor: "bac", etiqueta: "BAC Credomatic" },
+  { valor: "aliado", etiqueta: "Banco Aliado" },
+  { valor: "davivienda", etiqueta: "Davivienda" },
+  { valor: "scotiabank", etiqueta: "Scotiabank" },
+];
+
 // Marcas de tarjeta soportadas. Los SVG viven en public/logos/ (subidos por el usuario).
 const MARCAS_TARJETA = [
   { valor: "", etiqueta: "Sin especificar" },
@@ -695,11 +704,61 @@ function TarjetaVisual({ t, c }) {
   );
 }
 
-function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar }) {
+function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, userId }) {
   const [confirmando, setConfirmando] = useState(false);
   const [lealtadAbierta, setLealtadAbierta] = useState(false);
+  const [actualizando, setActualizando] = useState(false);
+  const [avisoGmail, setAvisoGmail] = useState("");
   const borde = c.nivel === "rojo" ? C.red : c.nivel === "ambar" ? C.amber : c.pagado ? C.green : C.line;
   const set = (campo) => (v) => onCambio({ ...t, [campo]: v });
+
+  // Llama al endpoint serverless que busca el estado de cuenta más reciente en Gmail,
+  // lo parsea y devuelve los datos. No guarda nada solo — el usuario ve los campos
+  // autocompletados en el formulario y confirma (o corrige) antes de que se guarde,
+  // igual que si los hubiera tecleado a mano.
+  const actualizarDesdeGmail = async () => {
+    if (!t.banco_gmail) {
+      setAvisoGmail("Elegí primero el banco (para actualizar desde Gmail) arriba.");
+      return;
+    }
+    if (!userId) {
+      setAvisoGmail("No se pudo identificar tu usuario.");
+      return;
+    }
+    setActualizando(true);
+    setAvisoGmail("");
+    try {
+      const resp = await fetch("/api/actualizar-estado", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, banco: t.banco_gmail }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) {
+        if (json.error === "no_conectado") {
+          setAvisoGmail("Gmail no está conectado. Conectalo desde el botón de arriba.");
+        } else {
+          setAvisoGmail(json.message || "No se pudo actualizar desde Gmail.");
+        }
+        return;
+      }
+      const d = json.datos || {};
+      onCambio({
+        ...t,
+        dia_corte: d.fecha_corte ? parseInt(d.fecha_corte.slice(8, 10), 10) : t.dia_corte,
+        dia_contado: d.fecha_pago_contado ? parseInt(d.fecha_pago_contado.slice(8, 10), 10) : t.dia_contado,
+        dia_minimo: d.fecha_pago_minimo ? parseInt(d.fecha_pago_minimo.slice(8, 10), 10) : t.dia_minimo,
+        saldo: d.saldo ?? t.saldo,
+        minimo: d.pago_minimo ?? t.minimo,
+        limite: d.limite || t.limite,
+      });
+      setAvisoGmail("Actualizado desde tu último estado de cuenta. Revisa los datos antes de guardar.");
+    } catch (err) {
+      setAvisoGmail("Error de conexión al actualizar desde Gmail.");
+    } finally {
+      setActualizando(false);
+    }
+  };
 
   const frase =
     c.estado === "pagado"
@@ -780,7 +839,42 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar }) {
                 ))}
               </select>
             </label>
+            <label style={{ flex: "1 1 200px", display: "block" }}>
+              <span
+                style={{
+                  display: "block", fontFamily: SANS, fontSize: 11, letterSpacing: 0.6,
+                  textTransform: "uppercase", color: C.soft, marginBottom: 6,
+                }}
+              >
+                Banco (para actualizar desde Gmail)
+              </span>
+              <select
+                value={t.banco_gmail || ""}
+                onChange={(e) => set("banco_gmail")(e.target.value)}
+                style={{
+                  width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 6,
+                  border: `1px solid ${C.line}`, background: "#fff", color: C.ink,
+                  fontFamily: SANS, fontSize: 16,
+                }}
+              >
+                {BANCOS_GMAIL.map((b) => (
+                  <option key={b.valor} value={b.valor}>{b.etiqueta}</option>
+                ))}
+              </select>
+            </label>
           </div>
+          {t.banco_gmail && (
+            <div style={{ marginTop: 12 }}>
+              <Boton variante="suave" onClick={actualizarDesdeGmail} disabled={actualizando}>
+                {actualizando ? "Buscando en Gmail…" : "Actualizar desde Gmail"}
+              </Boton>
+              {avisoGmail && (
+                <p style={{ margin: "8px 0 0", fontFamily: SANS, fontSize: 13, color: C.soft }}>
+                  {avisoGmail}
+                </p>
+              )}
+            </div>
+          )}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12 }}>
             <Campo
               etiqueta="Uso exclusivo en (opcional)"
@@ -952,6 +1046,7 @@ export default function App() {
   const [sinGuardar, setSinGuardar] = useState(false);
   const [simCategoria, setSimCategoria] = useState(CATEGORIAS[0]);
   const [simMonto, setSimMonto] = useState(100);
+  const [gmailConectado, setGmailConectado] = useState(false);
   const temporizador = useRef(null);
   const primera = useRef(true);
   const hoy = useMemo(() => hoyFn(), []);
@@ -971,6 +1066,18 @@ export default function App() {
       }
     })();
     return () => { vivo = false; };
+  }, []);
+
+  // Detecta la vuelta del flujo OAuth de Google (ver api/auth/callback/google.js) y limpia
+  // el query param para que no quede pegado en la URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("gmail") === "conectado") {
+      setGmailConectado(true);
+      params.delete("gmail");
+      const nueva = window.location.pathname + (params.toString() ? `?${params}` : "");
+      window.history.replaceState({}, "", nueva);
+    }
   }, []);
 
   const cargarTarjetas = async (userId) => {
@@ -1018,6 +1125,7 @@ export default function App() {
         nota: t.nota || "",
         pagado_hasta: t.pagado_hasta || null,
         marca: t.marca || "",
+        banco_gmail: t.banco_gmail || "",
         uso_exclusivo: t.uso_exclusivo || "",
         programa_lealtad: t.programa_lealtad || "",
         tasa_base: num(t.tasa_base) || 0,
@@ -1148,7 +1256,7 @@ const login = async (e) => {
     setAviso("Tarjeta eliminada.");
   };
   const agregar = () => {
-      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", marca: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null, uso_exclusivo: "", programa_lealtad: "", tasa_base: 0, valor_punto: 0, aceleradores: [], tasa_conversion_millas: 0, valor_milla_canje: 0 };
+      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", marca: "", banco_gmail: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null, uso_exclusivo: "", programa_lealtad: "", tasa_base: 0, valor_punto: 0, aceleradores: [], tasa_conversion_millas: 0, valor_milla_canje: 0 };
       setTarjetas((prev) => [t, ...prev]);
       setAbierta(t.id);
       setOrden("nombre");
@@ -1265,11 +1373,25 @@ const login = async (e) => {
             <p style={{ margin: 0, fontFamily: SANS, fontSize: 13, color: C.soft }}>
               {usuario.email}
             </p>
-            <Boton variante="fantasma" onClick={logout} style={{ marginTop: 10 }}>
-              Salir
-            </Boton>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10, flexWrap: "wrap" }}>
+              <Boton
+                variante="fantasma"
+                onClick={() => { window.location.href = `/api/auth/google?state=${usuario.id}`; }}
+              >
+                Conectar Gmail
+              </Boton>
+              <Boton variante="fantasma" onClick={logout}>
+                Salir
+              </Boton>
+            </div>
           </div>
         </header>
+
+        {gmailConectado && (
+          <div style={{ background: C.jadeSoft, borderRadius: 12, padding: "10px 16px", marginBottom: 16, fontFamily: SANS, fontSize: 13.5, color: C.jade }}>
+            Gmail conectado. Ya podés usar "Actualizar desde Gmail" en cada tarjeta.
+          </div>
+        )}
 
         <p style={{ fontFamily: SANS, fontSize: 16, lineHeight: 1.6, color: C.soft, marginBottom: 32 }}>
           Cada tarjeta te presta dinero gratis entre el corte y la fecha de pago de contado.
@@ -1533,6 +1655,7 @@ const login = async (e) => {
               onCambio={actualizar}
               onBorrar={() => borrar(t.id)}
               onPagar={() => alternarPago(t, c)}
+              userId={usuario?.id}
             />
           ))
         )}
