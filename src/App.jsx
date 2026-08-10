@@ -1049,6 +1049,15 @@ export default function App() {
   const [gmailConectado, setGmailConectado] = useState(false);
   const temporizador = useRef(null);
   const primera = useRef(true);
+  // Se pone en true solo cuando cargarTarjetas() terminó SIN error. Es la salvaguarda
+  // contra el peor escenario: si la carga inicial falla o no corrió todavía, tarjetas
+  // queda en [] por una razón ajena al usuario — guardarAhora() nunca debe interpretar
+  // ese [] como "el usuario borró todo" y arrasar con lo que ya está guardado.
+  const cargaExitosa = useRef(false);
+  // Ids reales (de Supabase) de tarjetas que el usuario eliminó con el botón "Eliminar
+  // tarjeta". guardarAhora() los borra explícitamente por id, uno por uno — es la única
+  // vía de borrado permitida, nunca un DELETE masivo por user_id.
+  const idsBorrados = useRef([]);
   const hoy = useMemo(() => hoyFn(), []);
 
   // Auth y carga inicial
@@ -1089,9 +1098,12 @@ export default function App() {
         .order("nombre");
       if (error) throw error;
       setTarjetas(data || []);
+      cargaExitosa.current = true;
     } catch (err) {
       console.error("Error cargando tarjetas:", err);
-      setAviso("Error al cargar tarjetas.");
+      setAviso("Error al cargar tarjetas. No se guardarán cambios hasta recargar la página.");
+      // cargaExitosa queda en false a propósito: bloquea guardarAhora() para no arriesgar
+      // los datos ya guardados en Supabase mientras no sepamos si esta carga fue real.
     }
   };
 
@@ -1104,43 +1116,78 @@ export default function App() {
     temporizador.current = setTimeout(guardarAhora, 1000);
   }, [tarjetas, listo, usuario]);
 
+  // Guardado por upsert + borrado selectivo (NUNCA un DELETE masivo por user_id).
+  // Antes este guardado borraba TODA la tabla del usuario y volvía a insertar todo desde
+  // cero en cada cambio; si el estado local de React llegaba a estar vacío por cualquier
+  // motivo ajeno al usuario (carga fallida, race condition, etc.), eso borraba datos reales
+  // sin remedio. Ahora: las tarjetas existentes se actualizan por su id real de Supabase,
+  // las nuevas (id local temporal) se insertan y adoptan el id que devuelve la base, y solo
+  // se borran (uno por uno, por id) las que el usuario eliminó explícitamente con el botón
+  // "Eliminar tarjeta" — nunca como efecto colateral de un guardado.
   const guardarAhora = async () => {
     if (!usuario) return;
+    if (!cargaExitosa.current) {
+      console.warn("guardarAhora() cancelado: la carga inicial de tarjetas no fue exitosa todavía.");
+      return;
+    }
     try {
-      // Borrar las viejas y cargar las nuevas
-      await supabase.from("tarjetas").delete().eq("user_id", usuario.id);
-      
-      const tarjetasParaGuardar = tarjetas.map((t) => ({
-        user_id: usuario.id,
-        nombre: t.nombre || "",
-        banco: t.banco || "",
-        dia_corte: t.dia_corte || 1,
-        dia_contado: t.dia_contado || 1,
-        dia_minimo: t.dia_minimo || 1,
-        saldo: num(t.saldo) || 0,
-        minimo: num(t.minimo) || 0,
-        consumo: num(t.consumo) || 0,
-        limite: num(t.limite) || 0,
-        tasa: num(t.tasa) || 0,
-        nota: t.nota || "",
-        pagado_hasta: t.pagado_hasta || null,
-        marca: t.marca || "",
-        banco_gmail: t.banco_gmail || "",
-        uso_exclusivo: t.uso_exclusivo || "",
-        programa_lealtad: t.programa_lealtad || "",
-        tasa_base: num(t.tasa_base) || 0,
-        valor_punto: num(t.valor_punto) || 0,
-        aceleradores: t.aceleradores || [],
-        tasa_conversion_millas: num(t.tasa_conversion_millas) || 0,
-        valor_milla_canje: num(t.valor_milla_canje) || 0,
-      }));
+      const esIdReal = (id) => typeof id === "string" && id.includes("-"); // UUID de Supabase
 
-      if (tarjetasParaGuardar.length > 0) {
-        const { error } = await supabase
+      const filasParaGuardar = tarjetas.map((t) => {
+        const fila = {
+          user_id: usuario.id,
+          nombre: t.nombre || "",
+          banco: t.banco || "",
+          dia_corte: t.dia_corte || 1,
+          dia_contado: t.dia_contado || 1,
+          dia_minimo: t.dia_minimo || 1,
+          saldo: num(t.saldo) || 0,
+          minimo: num(t.minimo) || 0,
+          consumo: num(t.consumo) || 0,
+          limite: num(t.limite) || 0,
+          tasa: num(t.tasa) || 0,
+          nota: t.nota || "",
+          pagado_hasta: t.pagado_hasta || null,
+          marca: t.marca || "",
+          banco_gmail: t.banco_gmail || "",
+          uso_exclusivo: t.uso_exclusivo || "",
+          programa_lealtad: t.programa_lealtad || "",
+          tasa_base: num(t.tasa_base) || 0,
+          valor_punto: num(t.valor_punto) || 0,
+          aceleradores: t.aceleradores || [],
+          tasa_conversion_millas: num(t.tasa_conversion_millas) || 0,
+          valor_milla_canje: num(t.valor_milla_canje) || 0,
+        };
+        if (esIdReal(t.id)) fila.id = t.id; // conserva el id existente; si no, Supabase genera uno nuevo
+        return fila;
+      });
+
+      if (filasParaGuardar.length > 0) {
+        const { data, error } = await supabase
           .from("tarjetas")
-          .insert(tarjetasParaGuardar);
+          .upsert(filasParaGuardar)
+          .select("id");
         if (error) throw error;
+
+        // PostgREST devuelve las filas del upsert en el mismo orden en que se enviaron,
+        // así que mapeamos por posición (índice a índice) en vez de asumir que las nuevas
+        // quedan al final — más robusto ante cualquier reordenamiento.
+        const haySinId = tarjetas.some((t) => !esIdReal(t.id));
+        if (haySinId && data && data.length === tarjetas.length) {
+          setTarjetas((prev) =>
+            prev.map((t, i) => (esIdReal(t.id) ? t : { ...t, id: data[i].id }))
+          );
+        }
       }
+
+      // Borrar (uno por uno) solo las filas de Supabase que ya no están en el estado local
+      // y que sabemos con certeza que existían antes (id real) — nunca un borrado masivo.
+      const idsActuales = new Set(tarjetas.filter((t) => esIdReal(t.id)).map((t) => t.id));
+      const idsABorrar = idsBorrados.current.filter((id) => !idsActuales.has(id));
+      for (const id of idsABorrar) {
+        await supabase.from("tarjetas").delete().eq("id", id).eq("user_id", usuario.id);
+      }
+      idsBorrados.current = [];
 
       setSinGuardar(false);
       setUltimoGuardado(new Date());
@@ -1251,6 +1298,12 @@ const login = async (e) => {
     setTarjetas((prev) => prev.map((x) => (x.id === t.id ? t : x)));
   };
   const borrar = (id) => {
+    // Solo hace falta pedirle a Supabase que borre la fila si tenía un id real (ya
+    // guardado); una tarjeta recién agregada y nunca guardada simplemente desaparece
+    // del estado local sin tocar la base.
+    if (typeof id === "string" && id.includes("-")) {
+      idsBorrados.current.push(id);
+    }
     setTarjetas((prev) => prev.filter((x) => x.id !== id));
     setAbierta(null);
     setAviso("Tarjeta eliminada.");
