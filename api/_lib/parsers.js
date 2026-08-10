@@ -105,23 +105,47 @@ function parseBAC(text) {
 function parseAliado(text) {
   const out = { banco: "aliado" };
 
-  let m = /FECHA DE CORTE\s+PAGAR ANTES DE\s*\n\s*(\d{2}\/\d{2}\/\d{2})\s+(\d{2}\/\d{2}\/\d{2})/.exec(text);
+  // pdf-parse (Node, usado en producción) extrae esta tabla en un orden distinto al de la
+  // herramienta usada para validar los patrones en local: primero las 6 etiquetas seguidas
+  // ("FECHA DE CORTE / LIMITE DE CREDITO / SALDO AL CORTE / PAGAR ANTES DE / PAGO MINIMO /
+  // CREDITO DISPONIBLE"), y después 3 líneas con los valores pegados de a dos:
+  //   05/08/2630/08/26            -> fecha de corte + fecha límite de pago
+  //   $1,801.15$54.03             -> saldo al corte + pago mínimo
+  //   $15,000.00$13,198.85        -> límite de crédito + crédito disponible
+  // (Verificado con datos reales: pago mínimo = ~3% del saldo, disponible = límite - saldo.)
+  let m =
+    /FECHA DE CORTE\s*\n\s*LIMITE DE CREDITO\s*\n\s*SALDO AL CORTE\s*\n\s*PAGAR ANTES DE\s*\n\s*PAGO MINIMO\s*\n\s*CREDITO DISPONIBLE\s*\n\s*(\d{2}\/\d{2}\/\d{2})(\d{2}\/\d{2}\/\d{2})\s*\n\s*\$([\d,]+\.\d{2}-?)\$([\d,]+\.\d{2})\s*\n\s*\$([\d,]+\.\d{2})\$([\d,]+\.\d{2})/.exec(
+      text
+    );
   if (m) {
     out.fecha_corte = isoFromDDMMYY(m[1]);
     // Aliado no distingue pago de contado vs mínimo: una sola fecha límite.
     out.fecha_pago_minimo = isoFromDDMMYY(m[2]);
     out.fecha_pago_contado = isoFromDDMMYY(m[2]);
-  }
+    out.saldo = parseAmount(m[3]);
+    out.pago_minimo = parseAmount(m[4]);
+    out.pago_contado = parseAmount(m[3]); // Aliado no ofrece descuento por pago de contado
+    out.limite = parseAmount(m[5]);
+  } else {
+    // Respaldo por si algún estado de cuenta se extrae en el orden "clásico" (etiquetas y
+    // valores de cada fila juntos en una misma línea), como se veía con otras herramientas.
+    m = /FECHA DE CORTE\s+PAGAR ANTES DE\s*\n\s*(\d{2}\/\d{2}\/\d{2})\s+(\d{2}\/\d{2}\/\d{2})/.exec(text);
+    if (m) {
+      out.fecha_corte = isoFromDDMMYY(m[1]);
+      out.fecha_pago_minimo = isoFromDDMMYY(m[2]);
+      out.fecha_pago_contado = isoFromDDMMYY(m[2]);
+    }
 
-  m = /SALDO AL CORTE\s+PAGO MINIMO\s*\n\s*\$([\d,]+\.\d{2}-?)\s+\$([\d,]+\.\d{2})/.exec(text);
-  if (m) {
-    out.saldo = parseAmount(m[1]);
-    out.pago_minimo = parseAmount(m[2]);
-    out.pago_contado = parseAmount(m[1]); // Aliado no ofrece descuento por pago de contado
-  }
+    m = /SALDO AL CORTE\s+PAGO MINIMO\s*\n\s*\$([\d,]+\.\d{2}-?)\s+\$([\d,]+\.\d{2})/.exec(text);
+    if (m) {
+      out.saldo = parseAmount(m[1]);
+      out.pago_minimo = parseAmount(m[2]);
+      out.pago_contado = parseAmount(m[1]);
+    }
 
-  m = /LIMITE DE CREDITO\s+CREDITO DISPONIBLE\s*\n\s*\$([\d,]+\.\d{2})/.exec(text);
-  if (m) out.limite = parseAmount(m[1]);
+    m = /LIMITE DE CREDITO\s+CREDITO DISPONIBLE\s*\n\s*\$([\d,]+\.\d{2})/.exec(text);
+    if (m) out.limite = parseAmount(m[1]);
+  }
 
   m = /^(VISA[^\n]+|MASTERCARD[^\n]+|AMERICAN EXPRESS[^\n]+)$/m.exec(text);
   if (m) out.producto = m[1].trim();
