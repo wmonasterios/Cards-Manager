@@ -51,7 +51,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { userId, banco, ultimos4 } = req.body || {};
+  const { userId, banco, ultimos4, debug } = req.body || {};
   if (!userId || !banco) {
     res.status(400).json({ error: "Faltan userId o banco" });
     return;
@@ -122,10 +122,12 @@ export default async function handler(req, res) {
 
       if (!digitosLimpios) {
         elegido = datos; // sin dígitos pedidos: nos quedamos con el primer correo válido
+        if (debug) elegido._texto_pdf = text.slice(0, 4000);
         break;
       }
       if (datos.ultimos_4 === digitosLimpios) {
         elegido = datos;
+        if (debug) elegido._texto_pdf = text.slice(0, 4000);
         break;
       }
     }
