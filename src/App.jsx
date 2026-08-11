@@ -1216,51 +1216,69 @@ export default function App() {
     try {
       const esIdReal = (id) => typeof id === "string" && id.includes("-"); // UUID de Supabase
 
-      const filasParaGuardar = tarjetas.map((t) => {
-        const fila = {
-          user_id: usuario.id,
-          nombre: t.nombre || "",
-          banco: t.banco || "",
-          dia_corte: t.dia_corte || 1,
-          dia_contado: t.dia_contado || 1,
-          dia_minimo: t.dia_minimo || 1,
-          saldo: num(t.saldo) || 0,
-          minimo: num(t.minimo) || 0,
-          consumo: num(t.consumo) || 0,
-          limite: num(t.limite) || 0,
-          tasa: num(t.tasa) || 0,
-          nota: t.nota || "",
-          pagado_hasta: t.pagado_hasta || null,
-          marca: t.marca || "",
-          banco_gmail: t.banco_gmail || "",
-          ultimos_4_digitos: t.ultimos_4_digitos || "",
-          uso_exclusivo: t.uso_exclusivo || "",
-          programa_lealtad: t.programa_lealtad || "",
-          tasa_base: num(t.tasa_base) || 0,
-          valor_punto: num(t.valor_punto) || 0,
-          aceleradores: t.aceleradores || [],
-          tasa_conversion_millas: num(t.tasa_conversion_millas) || 0,
-          valor_milla_canje: num(t.valor_milla_canje) || 0,
-        };
-        if (esIdReal(t.id)) fila.id = t.id; // conserva el id existente; si no, Supabase genera uno nuevo
-        return fila;
+      const construirFila = (t) => ({
+        user_id: usuario.id,
+        nombre: t.nombre || "",
+        banco: t.banco || "",
+        dia_corte: t.dia_corte || 1,
+        dia_contado: t.dia_contado || 1,
+        dia_minimo: t.dia_minimo || 1,
+        saldo: num(t.saldo) || 0,
+        minimo: num(t.minimo) || 0,
+        consumo: num(t.consumo) || 0,
+        limite: num(t.limite) || 0,
+        tasa: num(t.tasa) || 0,
+        nota: t.nota || "",
+        pagado_hasta: t.pagado_hasta || null,
+        marca: t.marca || "",
+        banco_gmail: t.banco_gmail || "",
+        ultimos_4_digitos: t.ultimos_4_digitos || "",
+        uso_exclusivo: t.uso_exclusivo || "",
+        programa_lealtad: t.programa_lealtad || "",
+        tasa_base: num(t.tasa_base) || 0,
+        valor_punto: num(t.valor_punto) || 0,
+        aceleradores: t.aceleradores || [],
+        tasa_conversion_millas: num(t.tasa_conversion_millas) || 0,
+        valor_milla_canje: num(t.valor_milla_canje) || 0,
       });
 
-      if (filasParaGuardar.length > 0) {
+      // PostgREST arma un único INSERT/UPSERT con una sola lista de columnas fija para
+      // todo el lote que se manda junto. Si se mezclan en la misma llamada tarjetas
+      // existentes (con id) y nuevas (sin id todavía), a las nuevas les manda NULL
+      // explícito en la columna "id" -- lo cual viola la restricción "not null" y hace
+      // fallar el guardado completo (tanto el automático como el manual). Por eso van en
+      // dos llamadas separadas: una para las existentes, otra para las nuevas.
+      const existentes = [];
+      const nuevas = []; // { fila, i }: guarda también el índice real en `tarjetas` para remapear el id después
+      tarjetas.forEach((t, i) => {
+        const fila = construirFila(t);
+        if (esIdReal(t.id)) {
+          fila.id = t.id;
+          existentes.push(fila);
+        } else {
+          nuevas.push({ fila, i });
+        }
+      });
+
+      if (existentes.length > 0) {
+        const { error } = await supabase.from("tarjetas").upsert(existentes);
+        if (error) throw error;
+      }
+
+      if (nuevas.length > 0) {
         const { data, error } = await supabase
           .from("tarjetas")
-          .upsert(filasParaGuardar)
+          .insert(nuevas.map((n) => n.fila))
           .select("id");
         if (error) throw error;
-
-        // PostgREST devuelve las filas del upsert en el mismo orden en que se enviaron,
-        // así que mapeamos por posición (índice a índice) en vez de asumir que las nuevas
-        // quedan al final — más robusto ante cualquier reordenamiento.
-        const haySinId = tarjetas.some((t) => !esIdReal(t.id));
-        if (haySinId && data && data.length === tarjetas.length) {
-          setTarjetas((prev) =>
-            prev.map((t, i) => (esIdReal(t.id) ? t : { ...t, id: data[i].id }))
-          );
+        if (data && data.length === nuevas.length) {
+          setTarjetas((prev) => {
+            const copia = [...prev];
+            nuevas.forEach((n, idx) => {
+              if (copia[n.i]) copia[n.i] = { ...copia[n.i], id: data[idx].id };
+            });
+            return copia;
+          });
         }
       }
 
