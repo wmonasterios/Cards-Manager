@@ -711,18 +711,18 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, onGuarda
   const [avisoGmail, setAvisoGmail] = useState("");
   const [avisoGmailTipo, setAvisoGmailTipo] = useState("info"); // "ok" | "error" | "info"
   const [guardandoManual, setGuardandoManual] = useState(false);
-  const [avisoGuardado, setAvisoGuardado] = useState(false);
+  const [avisoGuardado, setAvisoGuardado] = useState(null); // { ok: bool, motivo? } | null
 
   // Guarda de inmediato, sin esperar el segundo de espera del autoguardado -- para tener
   // la certeza de que un cambio recién hecho (ej. traído de Gmail) ya quedó en Supabase
   // antes de pasar a otra tarjeta o cerrar la pestaña.
   const guardarManual = async () => {
     setGuardandoManual(true);
-    setAvisoGuardado(false);
+    setAvisoGuardado(null);
     try {
-      await onGuardarAhora();
-      setAvisoGuardado(true);
-      setTimeout(() => setAvisoGuardado(false), 2500);
+      const resultado = await onGuardarAhora();
+      setAvisoGuardado(resultado || { ok: true }); // por compatibilidad si algo no devuelve nada
+      setTimeout(() => setAvisoGuardado(null), resultado?.ok === false ? 6000 : 2500);
     } finally {
       setGuardandoManual(false);
     }
@@ -1074,8 +1074,13 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, onGuarda
             <Boton variante="fantasma" onClick={guardarManual} disabled={guardandoManual}>
               {guardandoManual ? "Guardando…" : "Guardar ahora"}
             </Boton>
-            {avisoGuardado && (
+            {avisoGuardado && avisoGuardado.ok && (
               <span style={{ fontFamily: SANS, fontSize: 13, color: C.green }}>✓ Guardado</span>
+            )}
+            {avisoGuardado && avisoGuardado.ok === false && (
+              <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 600, color: C.red }}>
+                ⚠ No se guardó: {avisoGuardado.motivo || "error desconocido"}
+              </span>
             )}
             {confirmando ? (
               <>
@@ -1203,10 +1208,10 @@ export default function App() {
   // se borran (uno por uno, por id) las que el usuario eliminó explícitamente con el botón
   // "Eliminar tarjeta" — nunca como efecto colateral de un guardado.
   const guardarAhora = async () => {
-    if (!usuario) return;
+    if (!usuario) return { ok: false, motivo: "No hay usuario identificado." };
     if (!cargaExitosa.current) {
       console.warn("guardarAhora() cancelado: la carga inicial de tarjetas no fue exitosa todavía.");
-      return;
+      return { ok: false, motivo: "La carga inicial de tarjetas no terminó bien todavía. Recargá la página." };
     }
     try {
       const esIdReal = (id) => typeof id === "string" && id.includes("-"); // UUID de Supabase
@@ -1270,9 +1275,11 @@ export default function App() {
 
       setSinGuardar(false);
       setUltimoGuardado(new Date());
+      return { ok: true };
     } catch (err) {
       console.error("Error guardando:", err);
       setSinGuardar(true);
+      return { ok: false, motivo: err?.message || String(err) };
     }
   };
 
