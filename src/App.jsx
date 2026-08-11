@@ -704,12 +704,29 @@ function TarjetaVisual({ t, c }) {
   );
 }
 
-function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, userId }) {
+function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, onGuardarAhora, userId }) {
   const [confirmando, setConfirmando] = useState(false);
   const [lealtadAbierta, setLealtadAbierta] = useState(false);
   const [actualizando, setActualizando] = useState(false);
   const [avisoGmail, setAvisoGmail] = useState("");
   const [avisoGmailTipo, setAvisoGmailTipo] = useState("info"); // "ok" | "error" | "info"
+  const [guardandoManual, setGuardandoManual] = useState(false);
+  const [avisoGuardado, setAvisoGuardado] = useState(false);
+
+  // Guarda de inmediato, sin esperar el segundo de espera del autoguardado -- para tener
+  // la certeza de que un cambio recién hecho (ej. traído de Gmail) ya quedó en Supabase
+  // antes de pasar a otra tarjeta o cerrar la pestaña.
+  const guardarManual = async () => {
+    setGuardandoManual(true);
+    setAvisoGuardado(false);
+    try {
+      await onGuardarAhora();
+      setAvisoGuardado(true);
+      setTimeout(() => setAvisoGuardado(false), 2500);
+    } finally {
+      setGuardandoManual(false);
+    }
+  };
   const borde = c.nivel === "rojo" ? C.red : c.nivel === "ambar" ? C.amber : c.pagado ? C.green : C.line;
   const set = (campo) => (v) => onCambio({ ...t, [campo]: v });
 
@@ -1050,10 +1067,16 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, userId }
             )}
           </div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 20 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginTop: 20 }}>
             <Boton variante={c.pagado ? "suave" : "solido"} onClick={onPagar}>
               {c.pagado ? "Marcar como no pagada" : "Marcar como pagada"}
             </Boton>
+            <Boton variante="fantasma" onClick={guardarManual} disabled={guardandoManual}>
+              {guardandoManual ? "Guardando…" : "Guardar ahora"}
+            </Boton>
+            {avisoGuardado && (
+              <span style={{ fontFamily: SANS, fontSize: 13, color: C.green }}>✓ Guardado</span>
+            )}
             {confirmando ? (
               <>
                 <Boton variante="peligro" onClick={onBorrar}>Sí, eliminar</Boton>
@@ -1116,6 +1139,21 @@ export default function App() {
     })();
     return () => { vivo = false; };
   }, []);
+
+  // Si hay cambios sin guardar (autoguardado con debounce todavía pendiente) y el usuario
+  // recarga o cierra la pestaña, el navegador le pregunta antes de perderlos. Sin esto, un
+  // refresh accidental justo después de crear/editar una tarjeta la borra sin avisar, ya
+  // que ese cambio nunca llegó a escribirse en Supabase.
+  useEffect(() => {
+    const avisar = (e) => {
+      if (!sinGuardar) return;
+      e.preventDefault();
+      e.returnValue = "";
+      return "";
+    };
+    window.addEventListener("beforeunload", avisar);
+    return () => window.removeEventListener("beforeunload", avisar);
+  }, [sinGuardar]);
 
   // Detecta la vuelta del flujo OAuth de Google (ver api/auth/callback/google.js) y limpia
   // el query param para que no quede pegado en la URL.
@@ -1749,6 +1787,7 @@ const login = async (e) => {
               onCambio={actualizar}
               onBorrar={() => borrar(t.id)}
               onPagar={() => alternarPago(t, c)}
+              onGuardarAhora={guardarAhora}
               userId={usuario?.id}
             />
           ))
