@@ -855,7 +855,7 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, onGuarda
       </div>
 
       {abierta && (
-        <div style={{ padding: "4px 18px 20px", borderTop: `1px solid ${C.line}` }}>
+        <div id={`form-${t._key || t.id}`} style={{ padding: "4px 18px 20px", borderTop: `1px solid ${C.line}` }}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 16 }}>
             <Campo etiqueta="Nombre" valor={t.nombre} onChange={set("nombre")} ancho="2 1 200px" />
             <Campo etiqueta="Banco" valor={t.banco} onChange={set("banco")} ancho="1 1 160px" />
@@ -1133,6 +1133,9 @@ export default function App() {
   // tarjeta". guardarAhora() los borra explícitamente por id, uno por uno — es la única
   // vía de borrado permitida, nunca un DELETE masivo por user_id.
   const idsBorrados = useRef([]);
+  // Señal para el efecto de scroll: se pone en true justo al agregar una tarjeta nueva,
+  // para llevar el scroll a su formulario (no al abrir una tarjeta existente a mano).
+  const scrollAlAbrirNueva = useRef(false);
   const hoy = useMemo(() => hoyFn(), []);
 
   // Auth y carga inicial
@@ -1152,10 +1155,10 @@ export default function App() {
     return () => { vivo = false; };
   }, []);
 
-  // Si hay cambios sin guardar (autoguardado con debounce todavía pendiente) y el usuario
-  // recarga o cierra la pestaña, el navegador le pregunta antes de perderlos. Sin esto, un
-  // refresh accidental justo después de crear/editar una tarjeta la borra sin avisar, ya
-  // que ese cambio nunca llegó a escribirse en Supabase.
+  // Si hay cambios sin guardar (algo editado que todavía no se confirmó con "Guardar
+  // ahora") y el usuario recarga o cierra la pestaña, el navegador le pregunta antes de
+  // perderlos. Sin esto, un refresh accidental borra sin avisar cualquier cambio que no
+  // se haya llegado a guardar.
   useEffect(() => {
     const avisar = (e) => {
       if (!sinGuardar) return;
@@ -1166,6 +1169,17 @@ export default function App() {
     window.addEventListener("beforeunload", avisar);
     return () => window.removeEventListener("beforeunload", avisar);
   }, [sinGuardar]);
+
+  // Lleva el scroll al formulario de la tarjeta recién agregada (no al tope de la
+  // página), pero solo cuando la apertura vino de agregar(), no de un clic manual del
+  // usuario en una tarjeta existente.
+  useEffect(() => {
+    if (abierta == null || !scrollAlAbrirNueva.current) return;
+    scrollAlAbrirNueva.current = false;
+    requestAnimationFrame(() => {
+      document.getElementById(`form-${abierta}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [abierta]);
 
   // Detecta la vuelta del flujo OAuth de Google (ver api/auth/callback/google.js) y limpia
   // el query param para que no quede pegado en la URL.
@@ -1442,7 +1456,10 @@ const login = async (e) => {
       setTarjetas((prev) => [t, ...prev]);
       setAbierta(t.id);
       setOrden("nombre");
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      // Al agregar, se lleva el scroll directo al formulario (campo Nombre) en vez del
+      // tope de la página -- así no hay que scrollear de más pasando la vista previa de
+      // la tarjeta para empezar a llenar los datos.
+      scrollAlAbrirNueva.current = true;
     };
   const alternarPago = (t, c) => {
     const actualizada = { ...t, pagado_hasta: c.pagado ? null : iso(c.ultimoCorte) };
