@@ -722,7 +722,15 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, onGuarda
     try {
       const resultado = await onGuardarAhora();
       setAvisoGuardado(resultado || { ok: true }); // por compatibilidad si algo no devuelve nada
-      setTimeout(() => setAvisoGuardado(null), resultado?.ok === false ? 6000 : 2500);
+      if (resultado?.ok !== false) {
+        // Éxito: cierra la tarjeta. El aviso "✓ Guardado" queda visible en la vista
+        // colapsada (no depende de `abierta`), así que sigue viéndose después de cerrar.
+        if (abierta) onAbrir();
+        setTimeout(() => setAvisoGuardado(null), 4000);
+      } else {
+        // Si falló, la dejamos abierta para que se vea el error y se pueda reintentar.
+        setTimeout(() => setAvisoGuardado(null), 8000);
+      }
     } finally {
       setGuardandoManual(false);
     }
@@ -824,8 +832,11 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, onGuarda
       >
         <TarjetaVisual t={t} c={c} />
 
-        <div style={{ marginTop: 14 }}>
+        <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <Chip nivel={c.pagado ? "verde" : c.nivel}>{ETIQUETA[c.estado]}</Chip>
+          {avisoGuardado && avisoGuardado.ok !== false && (
+            <span style={{ fontFamily: SANS, fontSize: 13, color: C.green }}>✓ Guardado</span>
+          )}
         </div>
 
         <Ventana c={c} />
@@ -1074,9 +1085,6 @@ function Tarjeta({ t, c, abierta, onAbrir, onCambio, onBorrar, onPagar, onGuarda
             <Boton variante="fantasma" onClick={guardarManual} disabled={guardandoManual}>
               {guardandoManual ? "Guardando…" : "Guardar ahora"}
             </Boton>
-            {avisoGuardado && avisoGuardado.ok && (
-              <span style={{ fontFamily: SANS, fontSize: 13, color: C.green }}>✓ Guardado</span>
-            )}
             {avisoGuardado && avisoGuardado.ok === false && (
               <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 600, color: C.red }}>
                 ⚠ No se guardó: {avisoGuardado.motivo || "error desconocido"}
@@ -1115,7 +1123,6 @@ export default function App() {
   const [simCategoria, setSimCategoria] = useState(CATEGORIAS[0]);
   const [simMonto, setSimMonto] = useState(100);
   const [gmailConectado, setGmailConectado] = useState(false);
-  const temporizador = useRef(null);
   const primera = useRef(true);
   // Se pone en true solo cuando cargarTarjetas() terminó SIN error. Es la salvaguarda
   // contra el peor escenario: si la carga inicial falla o no corrió todavía, tarjetas
@@ -1180,7 +1187,11 @@ export default function App() {
         .eq("user_id", userId)
         .order("nombre");
       if (error) throw error;
-      setTarjetas(data || []);
+      // `_key` es una identidad de React estable, independiente del `id` real de Supabase
+      // -- así, cuando una tarjeta nueva pasa de un id temporal a su id definitivo al
+      // guardarse, el componente no se remonta (lo que borraría su estado local, como el
+      // aviso de "guardado" recién mostrado).
+      setTarjetas((data || []).map((t) => ({ ...t, _key: t.id })));
       cargaExitosa.current = true;
     } catch (err) {
       console.error("Error cargando tarjetas:", err);
@@ -1190,13 +1201,14 @@ export default function App() {
     }
   };
 
-  // Guardar automático con debounce
+  // Ya no hay guardado automático: cada cambio se guarda explícitamente (botón "Guardar
+  // ahora" en cada tarjeta, o de inmediato al marcar como pagada / eliminar). Este efecto
+  // solo marca que hay cambios sin guardar -- para el aviso al cerrar la pestaña
+  // (beforeunload) y el indicador de estado -- sin disparar ningún guardado por sí mismo.
   useEffect(() => {
     if (!listo || !usuario) return;
     if (primera.current) { primera.current = false; return; }
     setSinGuardar(true);
-    clearTimeout(temporizador.current);
-    temporizador.current = setTimeout(guardarAhora, 1000);
   }, [tarjetas, listo, usuario]);
 
   // Guardado por upsert + borrado selectivo (NUNCA un DELETE masivo por user_id).
@@ -1207,7 +1219,12 @@ export default function App() {
   // las nuevas (id local temporal) se insertan y adoptan el id que devuelve la base, y solo
   // se borran (uno por uno, por id) las que el usuario eliminó explícitamente con el botón
   // "Eliminar tarjeta" — nunca como efecto colateral de un guardado.
-  const guardarAhora = async () => {
+  // `tarjetasOverride`: opcional. Se usa cuando el llamador acaba de calcular el array
+  // nuevo y necesita guardarlo YA (marcar como pagada, eliminar) sin esperar a que React
+  // re-renderice -- si no se pasa, usa el estado `tarjetas` más reciente (caso normal del
+  // botón "Guardar ahora" dentro de una tarjeta, que ya corre sobre el render actualizado).
+  const guardarAhora = async (tarjetasOverride) => {
+    const listaTarjetas = tarjetasOverride || tarjetas;
     if (!usuario) return { ok: false, motivo: "No hay usuario identificado." };
     if (!cargaExitosa.current) {
       console.warn("guardarAhora() cancelado: la carga inicial de tarjetas no fue exitosa todavía.");
@@ -1249,8 +1266,8 @@ export default function App() {
       // fallar el guardado completo (tanto el automático como el manual). Por eso van en
       // dos llamadas separadas: una para las existentes, otra para las nuevas.
       const existentes = [];
-      const nuevas = []; // { fila, i }: guarda también el índice real en `tarjetas` para remapear el id después
-      tarjetas.forEach((t, i) => {
+      const nuevas = []; // { fila, i }: guarda también el índice real en `listaTarjetas` para remapear el id después
+      listaTarjetas.forEach((t, i) => {
         const fila = construirFila(t);
         if (esIdReal(t.id)) {
           fila.id = t.id;
@@ -1284,7 +1301,7 @@ export default function App() {
 
       // Borrar (uno por uno) solo las filas de Supabase que ya no están en el estado local
       // y que sabemos con certeza que existían antes (id real) — nunca un borrado masivo.
-      const idsActuales = new Set(tarjetas.filter((t) => esIdReal(t.id)).map((t) => t.id));
+      const idsActuales = new Set(listaTarjetas.filter((t) => esIdReal(t.id)).map((t) => t.id));
       const idsABorrar = idsBorrados.current.filter((id) => !idsActuales.has(id));
       for (const id of idsABorrar) {
         await supabase.from("tarjetas").delete().eq("id", id).eq("user_id", usuario.id);
@@ -1408,19 +1425,33 @@ const login = async (e) => {
     if (typeof id === "string" && id.includes("-")) {
       idsBorrados.current.push(id);
     }
-    setTarjetas((prev) => prev.filter((x) => x.id !== id));
+    const restantes = tarjetas.filter((x) => x.id !== id);
+    setTarjetas(restantes);
     setAbierta(null);
     setAviso("Tarjeta eliminada.");
+    // Ya no hay guardado automático, así que el borrado se confirma en Supabase de
+    // inmediato -- si no, la tarjeta desaparece de la lista (junto con su botón "Guardar
+    // ahora") sin que quede ninguna forma de disparar el borrado real más tarde.
+    guardarAhora(restantes);
   };
   const agregar = () => {
-      const t = { id: Date.now() + Math.random(), nombre: "", banco: "", marca: "", banco_gmail: "", ultimos_4_digitos: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null, uso_exclusivo: "", programa_lealtad: "", tasa_base: 0, valor_punto: 0, aceleradores: [], tasa_conversion_millas: 0, valor_milla_canje: 0 };
+      const idTemporal = Date.now() + Math.random();
+      // `_key` queda fija en este id temporal para siempre (ver cargarTarjetas): así el
+      // componente no se remonta cuando `id` cambie al id real de Supabase tras guardar.
+      const t = { id: idTemporal, _key: idTemporal, nombre: "", banco: "", marca: "", banco_gmail: "", ultimos_4_digitos: "", dia_corte: 1, dia_contado: 1, dia_minimo: 1, saldo: 0, minimo: 0, consumo: 0, limite: 0, tasa: 0, nota: "", pagado_hasta: null, uso_exclusivo: "", programa_lealtad: "", tasa_base: 0, valor_punto: 0, aceleradores: [], tasa_conversion_millas: 0, valor_milla_canje: 0 };
       setTarjetas((prev) => [t, ...prev]);
       setAbierta(t.id);
       setOrden("nombre");
       window.scrollTo({ top: 0, behavior: "smooth" });
     };
   const alternarPago = (t, c) => {
-    actualizar({ ...t, pagado_hasta: c.pagado ? null : iso(c.ultimoCorte) });
+    const actualizada = { ...t, pagado_hasta: c.pagado ? null : iso(c.ultimoCorte) };
+    const nuevas = tarjetas.map((x) => (x.id === t.id ? actualizada : x));
+    setTarjetas(nuevas);
+    // Ya no hay guardado automático: "marcar como pagada" no pasa por el botón "Guardar
+    // ahora" de la tarjeta, así que se guarda de inmediato para que el estado de pago
+    // quede reflejado en Supabase apenas se toca, sin pasos extra.
+    guardarAhora(nuevas);
   };
   const exportar = () => {
     const cab = [
@@ -1782,7 +1813,7 @@ const login = async (e) => {
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ width: 9, height: 9, borderRadius: 999, flexShrink: 0, background: sinGuardar ? C.amber : C.green }} />
             <span style={{ fontFamily: SANS, fontSize: 14.5, color: C.ink, flex: 1, minWidth: 180 }}>
-              {sinGuardar ? "Guardando cambios…" : ultimoGuardado ? "Guardado a las " + ultimoGuardado.toLocaleTimeString("es-PA", { hour: "2-digit", minute: "2-digit" }) : "Guardado en la nube."}
+              {sinGuardar ? "Hay cambios sin guardar. Tocá \"Guardar ahora\" en la tarjeta." : ultimoGuardado ? "Guardado a las " + ultimoGuardado.toLocaleTimeString("es-PA", { hour: "2-digit", minute: "2-digit" }) : "Guardado en la nube."}
             </span>
           </div>
         </div>
@@ -1804,7 +1835,7 @@ const login = async (e) => {
         ) : (
           visibles.map(({ t, c }) => (
             <Tarjeta
-              key={t.id}
+              key={t._key || t.id}
               t={t}
               c={c}
               abierta={abierta === t.id}
